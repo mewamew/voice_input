@@ -573,6 +573,73 @@
             font-size: 14px;
         }
 
+        /* 版本状态标签 */
+        .status-badge {
+            display: inline-block;
+            font-size: 11px;
+            padding: 2px 6px;
+            border-radius: 4px;
+            margin-left: 8px;
+            font-weight: 500;
+        }
+        .status-badge.auto {
+            background: #d4edda;
+            color: #155724;
+        }
+        .status-badge.manual {
+            background: #fff3cd;
+            color: #856404;
+        }
+        .status-badge.unchanged {
+            background: #e2e3e5;
+            color: #383d41;
+        }
+
+        /* 版本详情展开 */
+        .version-details {
+            display: none;
+            margin-top: 8px;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 6px;
+            font-size: 13px;
+        }
+        .version-details.show {
+            display: block;
+        }
+        .version-row {
+            display: flex;
+            margin-bottom: 6px;
+        }
+        .version-row:last-child {
+            margin-bottom: 0;
+        }
+        .version-label {
+            color: #86868b;
+            width: 60px;
+            flex-shrink: 0;
+        }
+        .version-text {
+            flex: 1;
+            word-break: break-all;
+        }
+        .version-text.changed {
+            color: #0071e3;
+        }
+        .expand-btn {
+            padding: 2px 8px;
+            font-size: 11px;
+            border: 1px solid #d2d2d7;
+            border-radius: 4px;
+            background: #fff;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-left: 4px;
+        }
+        .expand-btn:hover {
+            background: #f5f5f5;
+        }
+
         /* 使用说明样式 */
         .help-content {
             font-size: 14px;
@@ -984,12 +1051,22 @@
                 if (data.total_count === 0 && statsCurrentPage === 0) {
                     listEl.innerHTML = '<div class="stats-empty">暂无历史消息</div>';
                 } else {
-                    const html = data.history.map(item => `
-                        <div class="stats-history-item">
-                            <div class="stats-history-text">${escapeHtml(item.text)}</div>
-                            <div class="stats-history-time">${formatTime(item.timestamp)}</div>
-                        </div>
-                    `).join('');
+                    const html = data.history.map((item, idx) => {
+                        const globalIdx = 'stats-' + (statsCurrentPage * 20 + idx);
+                        const status = item.status;
+                        const hasVersionInfo = item.original && (status === 'auto' || status === 'manual' || status === 'unchanged');
+                        return `
+                            <div class="stats-history-item">
+                                <div class="stats-history-text">
+                                    ${escapeHtml(item.text)}
+                                    ${getStatusBadge(status, item.original, item.corrected)}
+                                    ${hasVersionInfo ? `<button class="expand-btn" onclick="toggleVersionDetails('${globalIdx}')">详情</button>` : ''}
+                                </div>
+                                <div class="stats-history-time">${formatTime(item.timestamp)}</div>
+                                ${getVersionDetailsForStats(item, globalIdx)}
+                            </div>
+                        `;
+                    }).join('');
                     listEl.insertAdjacentHTML('beforeend', html);
                 }
 
@@ -1122,6 +1199,73 @@
         // 当前窗口大小（用于高亮显示）
         let currentWindowSize = 5;
 
+        // 获取状态标签 HTML
+        function getStatusBadge(status, original, corrected) {
+            if (!status || status === 'none') return '';
+            const labels = {
+                'auto': '自动纠正',
+                'manual': '手动修改',
+                'unchanged': '无变化'
+            };
+            return `<span class="status-badge ${status}">${labels[status] || status}</span>`;
+        }
+
+        // 获取版本详情 HTML
+        function getVersionDetails(item, idx) {
+            const hasVersionInfo = item.original || item.corrected;
+            if (!hasVersionInfo) return '';
+
+            const original = item.original || item.text;
+            const corrected = item.corrected;
+            const text = item.text;
+
+            let detailsHtml = `<div class="version-details" id="version-details-${idx}">`;
+            detailsHtml += `<div class="version-row"><span class="version-label">原始:</span><span class="version-text">${escapeHtml(original)}</span></div>`;
+
+            if (corrected && corrected !== original) {
+                detailsHtml += `<div class="version-row"><span class="version-label">纠正:</span><span class="version-text changed">${escapeHtml(corrected)}</span></div>`;
+            }
+
+            if (text !== corrected && text !== original) {
+                detailsHtml += `<div class="version-row"><span class="version-label">最终:</span><span class="version-text changed">${escapeHtml(text)}</span></div>`;
+            }
+
+            detailsHtml += '</div>';
+            return detailsHtml;
+        }
+
+        // 切换版本详情展开
+        function toggleVersionDetails(idx) {
+            const el = document.getElementById('version-details-' + idx);
+            if (el) {
+                el.classList.toggle('show');
+            }
+        }
+
+        // 获取统计页面版本详情 HTML
+        function getVersionDetailsForStats(item, idx) {
+            const hasVersionInfo = item.original || item.corrected;
+            if (!hasVersionInfo) return '';
+
+            const original = item.original || item.text;
+            const corrected = item.corrected;
+            const text = item.text;
+
+            let detailsHtml = `<div class="version-details" id="version-details-${idx}" style="margin-top: 8px;">`;
+            detailsHtml += `<div class="version-row"><span class="version-label">原始:</span><span class="version-text">${escapeHtml(original)}</span></div>`;
+
+            if (corrected && corrected !== original) {
+                detailsHtml += `<div class="version-row"><span class="version-label">纠正:</span><span class="version-text changed">${escapeHtml(corrected)}</span></div>`;
+            }
+
+            if (text !== corrected && text !== original) {
+                detailsHtml += `<div class="version-row"><span class="version-label">最终:</span><span class="version-text changed">${escapeHtml(text)}</span></div>`;
+            }
+
+            detailsHtml += '</div>';
+            return detailsHtml;
+        }
+
         // 渲染历史消息列表（显示窗口范围内的消息）
         function renderHistoryList(history, windowSize) {
             currentWindowSize = windowSize;
@@ -1140,13 +1284,21 @@
             listEl.innerHTML = history.map((item, i) => {
                 const text = item.text;
                 const timestamp = item.timestamp;
+                const status = item.status;
+                const hasVersionInfo = item.original && (item.status === 'auto' || item.status === 'manual' || item.status === 'unchanged');
+
                 return `
-                    <div class="history-item">
-                        <span class="history-text in-window" title="${escapeHtml(text)}">${escapeHtml(text)}</span>
-                        <div class="history-actions">
-                            <button class="history-btn" onclick="editHistory('${escapeHtml(timestamp)}')">编辑</button>
-                            <button class="history-btn delete" onclick="deleteHistory('${escapeHtml(timestamp)}')">删除</button>
+                    <div class="history-item" style="flex-direction: column; align-items: stretch;">
+                        <div style="display: flex; align-items: center;">
+                            <span class="history-text in-window" title="${escapeHtml(text)}">${escapeHtml(text)}</span>
+                            ${getStatusBadge(status, item.original, item.corrected)}
+                            ${hasVersionInfo ? `<button class="expand-btn" onclick="toggleVersionDetails(${i})">详情</button>` : ''}
+                            <div class="history-actions">
+                                <button class="history-btn" onclick="editHistory('${escapeHtml(timestamp)}')">编辑</button>
+                                <button class="history-btn delete" onclick="deleteHistory('${escapeHtml(timestamp)}')">删除</button>
+                            </div>
                         </div>
+                        ${getVersionDetails(item, i)}
                     </div>
                 `;
             }).join('');

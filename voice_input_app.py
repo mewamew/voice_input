@@ -135,11 +135,11 @@ class VoiceInputApp(rumps.App):
             rumps.notification("语音输入", "", "剪贴板为空", sound=False)
             return
 
-        # 更新最新历史
+        # 更新最新历史（标记为手动覆盖）
         history_mgr = get_history_manager()
         recent = history_mgr.get_recent(1)
         if recent:
-            history_mgr.update(recent[0]["timestamp"], clipboard_text)
+            history_mgr.update(recent[0]["timestamp"], clipboard_text, is_manual=True)
             rumps.notification("语音输入", "", "已更新最新历史", sound=False)
         else:
             rumps.notification("语音输入", "", "暂无历史消息", sound=False)
@@ -214,24 +214,41 @@ class VoiceInputApp(rumps.App):
                 return
 
             # 调用 ASR 识别
-            text = self._recognize_speech(audio_base64)
+            original_text = self._recognize_speech(audio_base64)
+
+            # 版本追踪变量
+            corrected_text = original_text
+            status = "none"
 
             # 1. 语音纠错（如果启用且长度>=5）
-            if text and text.strip() and len(text.strip()) >= 5 and self.config.llm_correction_enabled:
-                text = self._correct_with_llm(text)
+            if original_text and original_text.strip() and len(original_text.strip()) >= 5 and self.config.llm_correction_enabled:
+                corrected_text = self._correct_with_llm(original_text)
+                if corrected_text != original_text:
+                    status = "auto"
+                else:
+                    status = "unchanged"
 
             # 2. 上下文纠错（如果启用）
-            if text and text.strip() and self.config.context_correction_enabled:
-                text = self._correct_with_context(text)
+            if corrected_text and corrected_text.strip() and self.config.context_correction_enabled:
+                context_corrected = self._correct_with_context(corrected_text)
+                if context_corrected != corrected_text:
+                    corrected_text = context_corrected
+                    status = "auto"
 
-            # 3. 将结果添加到历史（无论是否纠错）
-            if text and text.strip():
+            # 3. 将结果添加到历史（带版本信息）
+            final_text = corrected_text
+            if final_text and final_text.strip():
                 history_mgr = get_history_manager()
-                history_mgr.add(text)
+                history_mgr.add(
+                    original=original_text,
+                    corrected=corrected_text if status != "none" else None,
+                    text=final_text,
+                    status=status
+                )
 
-            if text:
+            if final_text:
                 # 输入识别的文字
-                input_text(text)
+                input_text(final_text)
             else:
                 rumps.notification(
                     title="语音输入",

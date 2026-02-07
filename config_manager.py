@@ -69,10 +69,24 @@ class HistoryManager:
         month_files.sort(key=lambda x: x.stem, reverse=True)
         return month_files
 
-    def add(self, text: str):
-        """追加消息到当月文件"""
+    def add(self, original: str, corrected: str = None, text: str = None, status: str = "none"):
+        """追加消息到当月文件
+
+        Args:
+            original: 原始识别文本
+            corrected: AI 纠正后的文本（可选）
+            text: 最终文本（可选，默认使用 corrected 或 original）
+            status: 状态 (none/auto/unchanged/manual)
+        """
+        # 确定最终文本
+        if text is None:
+            text = corrected if corrected else original
+
         item = {
+            "original": original,
+            "corrected": corrected,
             "text": text,
+            "status": status,
             "timestamp": datetime.now().isoformat()
         }
         month = datetime.now().strftime("%Y-%m")
@@ -151,8 +165,14 @@ class HistoryManager:
             "history": page_data
         }
 
-    def update(self, timestamp: str, text: str):
-        """编辑指定消息（通过时间戳定位）"""
+    def update(self, timestamp: str, text: str, is_manual: bool = False):
+        """编辑指定消息（通过时间戳定位）
+
+        Args:
+            timestamp: 消息时间戳
+            text: 新的文本内容
+            is_manual: 是否为用户手动覆盖（双击快捷键）
+        """
         # 根据时间戳确定月份
         try:
             dt = datetime.fromisoformat(timestamp)
@@ -168,6 +188,9 @@ class HistoryManager:
             if item.get("timestamp") == timestamp:
                 old_text = item.get("text", "")
                 item["text"] = text
+                # 如果是手动覆盖，更新状态为 manual
+                if is_manual:
+                    item["status"] = "manual"
                 break
 
         self._write_file(filepath, items)

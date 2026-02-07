@@ -104,7 +104,9 @@ class AudioRecorder:
             if not self._recording:
                 return np.array([], dtype=np.int16)
 
+            # 先设置标志，阻止 _audio_callback 触发自动停止
             self._recording = False
+            self._auto_stopped = True
 
             if self._stream:
                 self._stream.stop()
@@ -164,7 +166,8 @@ class AudioRecorder:
 
     def _trigger_auto_stop(self, reason: str):
         """触发自动停止"""
-        if self._auto_stopped:
+        # 双重检查：如果已经停止或不在录音状态，直接返回
+        if self._auto_stopped or not self._recording:
             return
 
         self._auto_stopped = True
