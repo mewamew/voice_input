@@ -82,10 +82,12 @@ class VoiceInputApp(rumps.App):
         self.status_item.set_callback(None)
         self.stats_item = rumps.MenuItem("今日: 0 字 | 累计: 0 字")
         self.stats_item.set_callback(None)
+        self.record_item = rumps.MenuItem("开始录音", callback=self._toggle_recording)
         self.menu = [
             self.status_item,
             self.stats_item,
             None,  # 分隔线
+            self.record_item,
             rumps.MenuItem("设置...", callback=self._open_settings),
         ]
 
@@ -114,12 +116,19 @@ class VoiceInputApp(rumps.App):
             if new_state == AppState.IDLE:
                 self.icon = self.icon_idle
                 self._update_status("空闲")
+                self.record_item.title = "开始录音"
             elif new_state == AppState.RECORDING:
                 self.icon = self.icon_recording
                 self._update_status("录音中...")
+                self.record_item.title = "结束录音"
             elif new_state == AppState.PROCESSING:
                 self.icon = self.icon_idle
                 self._update_status("识别中...")
+                self.record_item.title = "识别中..."
+
+    def _toggle_recording(self, _):
+        """菜单录音按钮回调"""
+        self._on_shortcut()
 
     def _on_shortcut(self):
         """快捷键回调"""
