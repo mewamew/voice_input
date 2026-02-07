@@ -1,0 +1,10 @@
+rumps
+pynput
+pyobjc-framework-Quartz
+pyobjc-framework-Cocoa
+sounddevice
+scipy
+numpy
+openai
+fastapi
+uvicorn

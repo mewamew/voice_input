@@ -328,6 +328,53 @@
             border-color: #0071e3;
         }
 
+        /* TTL 滑块样式 */
+        .ttl-selector {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .form-range {
+            flex: 1;
+            height: 6px;
+            -webkit-appearance: none;
+            appearance: none;
+            background: #d2d2d7;
+            border-radius: 3px;
+            outline: none;
+        }
+
+        .form-range::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            background: #0071e3;
+            border-radius: 50%;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        .form-range::-webkit-slider-thumb:hover {
+            transform: scale(1.1);
+        }
+
+        .form-range::-moz-range-thumb {
+            width: 20px;
+            height: 20px;
+            background: #0071e3;
+            border-radius: 50%;
+            cursor: pointer;
+            border: none;
+        }
+
+        .ttl-value {
+            min-width: 70px;
+            font-weight: 500;
+            color: #0071e3;
+        }
+
         /* 历史消息列表 */
         .history-list {
             max-height: 300px;
@@ -699,6 +746,15 @@
                     </div>
 
                     <div class="form-group">
+                        <label class="form-label">历史消息有效期</label>
+                        <div class="ttl-selector">
+                            <input type="range" id="history-ttl-slider" class="form-range" min="5" max="60" step="5" value="10">
+                            <span id="history-ttl-value" class="ttl-value">10 分钟</span>
+                        </div>
+                        <p class="form-hint">超过有效期的历史消息不会用于上下文纠错（5-60 分钟）</p>
+                    </div>
+
+                    <div class="form-group">
                         <label class="form-label">上下文纠错提示词</label>
                         <textarea id="context-correction-prompt" class="form-textarea" placeholder="请输入上下文纠错提示词"></textarea>
                         <p class="form-hint">使用 {history} 和 {current} 作为占位符</p>
@@ -1009,6 +1065,11 @@
                 // 设置上下文纠错提示词
                 document.getElementById('context-correction-prompt').value = config.llm.context_correction_prompt || '';
 
+                // 设置历史有效期滑块
+                const ttl = config.llm.context_history_ttl || 10;
+                document.getElementById('history-ttl-slider').value = ttl;
+                document.getElementById('history-ttl-value').textContent = ttl + ' 分钟';
+
                 // 渲染历史消息列表
                 renderHistoryList(config.context_history || [], windowSize);
 
@@ -1206,6 +1267,8 @@
                 data.llm.context_correction_enabled = document.getElementById('context-correction-enabled').checked;
             } else if (field === 'context_window_size') {
                 data.llm.context_window_size = value;
+            } else if (field === 'context_history_ttl') {
+                data.llm.context_history_ttl = value;
             } else if (field === 'context_correction_prompt') {
                 data.llm.context_correction_prompt = document.getElementById('context-correction-prompt').value;
             }
@@ -1290,6 +1353,16 @@
         // 上下文纠错事件绑定
         document.getElementById('context-correction-enabled').addEventListener('change', () => saveLLM('context_correction_enabled'));
         document.getElementById('context-correction-prompt').addEventListener('blur', () => saveLLM('context_correction_prompt'));
+
+        // 历史有效期滑块事件绑定
+        const ttlSlider = document.getElementById('history-ttl-slider');
+        const ttlValue = document.getElementById('history-ttl-value');
+        ttlSlider.addEventListener('input', () => {
+            ttlValue.textContent = ttlSlider.value + ' 分钟';
+        });
+        ttlSlider.addEventListener('change', () => {
+            saveLLM('context_history_ttl', parseInt(ttlSlider.value));
+        });
 
         // 窗口大小选择
         document.querySelectorAll('.window-size-btn').forEach(btn => {

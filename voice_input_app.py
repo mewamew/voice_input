@@ -320,9 +320,12 @@ class VoiceInputApp(rumps.App):
         Returns:
             纠错后的文本
         """
-        # 获取上下文窗口内的历史消息
+        # 获取上下文窗口内的历史消息（带有效期过滤）
         history_mgr = get_history_manager()
-        recent = history_mgr.get_recent(self.config.context_window_size)
+        recent = history_mgr.get_recent(
+            self.config.context_window_size,
+            ttl_minutes=self.config.context_history_ttl
+        )
         context_window = [h["text"] for h in recent]
         if not context_window:
             # 没有历史消息，直接返回

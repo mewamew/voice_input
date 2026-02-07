@@ -38,6 +38,7 @@ class LLMConfig(BaseModel):
     correction_prompt: Optional[str] = None
     context_correction_enabled: Optional[bool] = None
     context_window_size: Optional[int] = None
+    context_history_ttl: Optional[int] = None
     context_correction_prompt: Optional[str] = None
 
 
@@ -100,6 +101,7 @@ async def get_config_api():
             "correction_prompt": config.llm_correction_prompt,
             "context_correction_enabled": config.context_correction_enabled,
             "context_window_size": config.context_window_size,
+            "context_history_ttl": config.context_history_ttl,
             "context_correction_prompt": config.context_correction_prompt
         },
         "context_history": get_history_manager().get_recent(config.context_window_size)
@@ -138,6 +140,8 @@ async def save_config_api(data: ConfigUpdate):
             config.context_correction_enabled = data.llm.context_correction_enabled
         if data.llm.context_window_size is not None:
             config.context_window_size = data.llm.context_window_size
+        if data.llm.context_history_ttl is not None:
+            config.context_history_ttl = data.llm.context_history_ttl
         if data.llm.context_correction_prompt is not None:
             config.context_correction_prompt = data.llm.context_correction_prompt
 

@@ -79,14 +79,41 @@ class HistoryManager:
         self._append_to_file(f"{month}.jsonl", item)
         self._update_stats_add(text)
 
-    def get_recent(self, count: int) -> List[Dict]:
-        """获取最近 N 条消息（用于上下文窗口）"""
+    def get_recent(self, count: int, ttl_minutes: int = 0) -> List[Dict]:
+        """获取最近 N 条消息（用于上下文窗口）
+
+        Args:
+            count: 最大返回条数
+            ttl_minutes: 有效期（分钟），0 表示不限制
+
+        Returns:
+            符合条件的历史消息列表
+        """
         if count <= 0:
             return []
 
         result = []
+        now = datetime.now()
+
         for filepath in self._get_all_month_files():
             items = self._read_file(filepath)
+
+            # 如果设置了 TTL，过滤掉过期的消息
+            if ttl_minutes > 0:
+                valid_items = []
+                for item in items:
+                    timestamp_str = item.get("timestamp", "")
+                    if timestamp_str:
+                        try:
+                            item_time = datetime.fromisoformat(timestamp_str)
+                            age_minutes = (now - item_time).total_seconds() / 60
+                            if age_minutes <= ttl_minutes:
+                                valid_items.append(item)
+                        except ValueError:
+                            # 时间戳格式错误，跳过
+                            continue
+                items = valid_items
+
             # 从末尾取
             needed = count - len(result)
             if len(items) >= needed:
@@ -305,6 +332,7 @@ class ConfigManager:
             "correction_prompt": DEFAULT_CORRECTION_PROMPT,
             "context_correction_enabled": False,
             "context_window_size": 5,
+            "context_history_ttl": 10,  # 历史消息有效期（分钟）
             "context_correction_prompt": DEFAULT_CONTEXT_CORRECTION_PROMPT
         },
     }
@@ -558,6 +586,17 @@ class ConfigManager:
     def context_correction_prompt(self, value: str):
         """设置上下文纠错提示词"""
         self._config["llm"]["context_correction_prompt"] = value
+        self._save_config()
+
+    @property
+    def context_history_ttl(self) -> int:
+        """获取上下文历史有效期（分钟）"""
+        return self._config["llm"].get("context_history_ttl", 10)
+
+    @context_history_ttl.setter
+    def context_history_ttl(self, value: int):
+        """设置上下文历史有效期（5-1440 分钟）"""
+        self._config["llm"]["context_history_ttl"] = max(5, min(1440, value))
         self._save_config()
 
     def _migrate_history_if_needed(self):
