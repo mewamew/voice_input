@@ -6,6 +6,11 @@
 import os
 import threading
 import webbrowser
+
+# 隐藏 Dock 图标（必须在导入 rumps 之前设置）
+from AppKit import NSApplication, NSApplicationActivationPolicyAccessory
+NSApplication.sharedApplication().setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+
 import rumps
 from enum import Enum
 from openai import OpenAI
