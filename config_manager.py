@@ -240,6 +240,22 @@ class HistoryManager:
         # 重新计算
         return self._recalculate_stats()
 
+    def get_today_stats(self) -> Dict:
+        """获取今日统计"""
+        today = datetime.now().strftime("%Y-%m-%d")
+        filepath = self._get_month_file()  # 当月文件
+        items = self._read_file(filepath)
+
+        today_chars = 0
+        today_count = 0
+        for item in items:
+            ts = item.get("timestamp", "")
+            if ts.startswith(today):
+                today_chars += len(item.get("text", ""))
+                today_count += 1
+
+        return {"today_chars": today_chars, "today_count": today_count}
+
     def _save_stats(self, stats: Dict):
         """保存统计信息"""
         with open(self.stats_file, "w", encoding="utf-8") as f:

@@ -80,15 +80,31 @@ class VoiceInputApp(rumps.App):
         # 菜单项
         self.status_item = rumps.MenuItem("状态: 空闲")
         self.status_item.set_callback(None)
+        self.stats_item = rumps.MenuItem("今日: 0 字 | 累计: 0 字")
+        self.stats_item.set_callback(None)
         self.menu = [
             self.status_item,
+            self.stats_item,
             None,  # 分隔线
             rumps.MenuItem("设置...", callback=self._open_settings),
         ]
 
+        # 初始化统计显示
+        self._update_stats_display()
+
     def _update_status(self, text: str):
         """更新状态栏菜单中的状态文字"""
         self.status_item.title = f"状态: {text}"
+
+    def _update_stats_display(self):
+        """更新统计显示"""
+        history_mgr = get_history_manager()
+        stats = history_mgr.get_stats()
+        today_stats = history_mgr.get_today_stats()
+
+        today_chars = today_stats.get("today_chars", 0)
+        total_chars = stats.get("total_chars", 0)
+        self.stats_item.title = f"今日: {today_chars:,} 字 | 累计: {total_chars:,} 字"
 
     def _set_state(self, new_state: AppState):
         """设置应用状态"""
@@ -140,6 +156,8 @@ class VoiceInputApp(rumps.App):
         recent = history_mgr.get_recent(1)
         if recent:
             history_mgr.update(recent[0]["timestamp"], clipboard_text, is_manual=True)
+            # 更新统计显示
+            self._update_stats_display()
             rumps.notification("语音输入", "", "已更新最新历史", sound=False)
         else:
             rumps.notification("语音输入", "", "暂无历史消息", sound=False)
@@ -245,6 +263,8 @@ class VoiceInputApp(rumps.App):
                     text=final_text,
                     status=status
                 )
+                # 更新统计显示
+                self._update_stats_display()
 
             if final_text:
                 # 输入识别的文字
