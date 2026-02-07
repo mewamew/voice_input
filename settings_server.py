@@ -42,6 +42,12 @@ class LLMConfig(BaseModel):
     context_correction_prompt: Optional[str] = None
 
 
+class RecordingConfig(BaseModel):
+    """录音配置"""
+    max_duration: Optional[int] = None
+    silence_timeout: Optional[int] = None
+
+
 class ContextHistoryUpdate(BaseModel):
     """历史消息更新"""
     text: str
@@ -52,6 +58,7 @@ class ConfigUpdate(BaseModel):
     microphone: Optional[MicrophoneConfig] = None
     asr: Optional[ASRConfig] = None
     llm: Optional[LLMConfig] = None
+    recording: Optional[RecordingConfig] = None
 
 
 @app.get("/settings", response_class=HTMLResponse)
@@ -86,6 +93,10 @@ async def get_config_api():
         "microphone": {
             "device_id": config.microphone_device_id,
             "device_name": config.microphone_device_name
+        },
+        "recording": {
+            "max_duration": config.recording_max_duration,
+            "silence_timeout": config.recording_silence_timeout
         },
         "asr": {
             "api_key": masked_key,
@@ -144,6 +155,12 @@ async def save_config_api(data: ConfigUpdate):
             config.context_history_ttl = data.llm.context_history_ttl
         if data.llm.context_correction_prompt is not None:
             config.context_correction_prompt = data.llm.context_correction_prompt
+
+    if data.recording:
+        if data.recording.max_duration is not None:
+            config.recording_max_duration = data.recording.max_duration
+        if data.recording.silence_timeout is not None:
+            config.recording_silence_timeout = data.recording.silence_timeout
 
     return {"status": "ok"}
 

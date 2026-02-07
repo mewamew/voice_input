@@ -601,6 +601,10 @@
                 <span class="nav-icon">🎤</span>
                 <span>麦克风</span>
             </div>
+            <div class="nav-item" data-section="recording">
+                <span class="nav-icon">⏱️</span>
+                <span>录音设置</span>
+            </div>
             <div class="nav-item" data-section="asr">
                 <span class="nav-icon">🧠</span>
                 <span>语音识别模型</span>
@@ -632,6 +636,34 @@
                             <option value="">自动（跟随系统）</option>
                         </select>
                         <p class="form-hint">选择用于语音输入的麦克风设备</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 录音设置 -->
+            <div id="recording" class="section">
+                <h2 class="section-title">录音设置</h2>
+                <p class="section-desc">配置录音超时和自动停止行为</p>
+
+                <div class="card">
+                    <div class="card-title">自动停止</div>
+
+                    <div class="form-group">
+                        <label class="form-label">最长录音时长</label>
+                        <div class="ttl-selector">
+                            <input type="range" id="max-duration-slider" class="form-range" min="10" max="120" step="10" value="60">
+                            <span id="max-duration-value" class="ttl-value">60 秒</span>
+                        </div>
+                        <p class="form-hint">超过此时长将自动停止录音并进行识别（10-120 秒）</p>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">静音超时时间</label>
+                        <div class="ttl-selector">
+                            <input type="range" id="silence-timeout-slider" class="form-range" min="2" max="10" step="1" value="3">
+                            <span id="silence-timeout-value" class="ttl-value">3 秒</span>
+                        </div>
+                        <p class="form-hint">开始录音后如果持续静音超过此时长，将自动取消录音（2-10 秒）</p>
                     </div>
                 </div>
             </div>
@@ -1022,6 +1054,15 @@
                 // 设置模型
                 document.getElementById('asr-model').value = config.asr.model;
 
+                // 设置录音配置
+                const maxDuration = config.recording?.max_duration || 60;
+                document.getElementById('max-duration-slider').value = maxDuration;
+                document.getElementById('max-duration-value').textContent = maxDuration + ' 秒';
+
+                const silenceTimeout = config.recording?.silence_timeout || 3;
+                document.getElementById('silence-timeout-slider').value = silenceTimeout;
+                document.getElementById('silence-timeout-value').textContent = silenceTimeout + ' 秒';
+
                 // 设置 LLM 配置
                 const llmApiKeyInput = document.getElementById('llm-api-key');
                 if (config.llm.api_key_set) {
@@ -1337,10 +1378,51 @@
             }
         }
 
+        // 保存录音设置
+        async function saveRecording(field, value) {
+            const data = { recording: {} };
+
+            if (field === 'max_duration') {
+                data.recording.max_duration = value;
+            } else if (field === 'silence_timeout') {
+                data.recording.silence_timeout = value;
+            }
+
+            try {
+                await fetch('/api/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+                showToast();
+            } catch (error) {
+                showToast('保存失败');
+            }
+        }
+
         // 绑定事件
         document.getElementById('microphone-select').addEventListener('change', saveMicrophone);
         document.getElementById('api-key').addEventListener('blur', () => saveASR('api_key'));
         document.getElementById('asr-model').addEventListener('change', () => saveASR('model'));
+
+        // 录音设置事件绑定
+        const maxDurationSlider = document.getElementById('max-duration-slider');
+        const maxDurationValue = document.getElementById('max-duration-value');
+        maxDurationSlider.addEventListener('input', () => {
+            maxDurationValue.textContent = maxDurationSlider.value + ' 秒';
+        });
+        maxDurationSlider.addEventListener('change', () => {
+            saveRecording('max_duration', parseInt(maxDurationSlider.value));
+        });
+
+        const silenceTimeoutSlider = document.getElementById('silence-timeout-slider');
+        const silenceTimeoutValue = document.getElementById('silence-timeout-value');
+        silenceTimeoutSlider.addEventListener('input', () => {
+            silenceTimeoutValue.textContent = silenceTimeoutSlider.value + ' 秒';
+        });
+        silenceTimeoutSlider.addEventListener('change', () => {
+            saveRecording('silence_timeout', parseInt(silenceTimeoutSlider.value));
+        });
 
         // LLM 事件绑定
         document.getElementById('llm-api-key').addEventListener('blur', () => saveLLM('api_key'));

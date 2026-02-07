@@ -147,7 +147,35 @@ class VoiceInputApp(rumps.App):
     def _start_recording(self):
         """开始录音"""
         self._set_state(AppState.RECORDING)
-        self.recorder.start()
+        self.recorder.start(
+            max_duration=self.config.recording_max_duration,
+            silence_timeout=self.config.recording_silence_timeout,
+            on_auto_stop=self._on_auto_stop
+        )
+
+    def _on_auto_stop(self, reason: str):
+        """处理自动停止事件
+
+        Args:
+            reason: 停止原因 ('timeout' / 'silence')
+        """
+        with self._state_lock:
+            if self.state != AppState.RECORDING:
+                return
+
+        if reason == 'timeout':
+            # 超时：停止录音并进行识别
+            self._stop_and_recognize()
+        elif reason == 'silence':
+            # 静音超时：取消录音
+            self._set_state(AppState.IDLE)
+            self.recorder.stop()  # 停止录音但不处理
+            rumps.notification(
+                title="语音输入",
+                subtitle="",
+                message="录音已取消（未检测到声音）",
+                sound=False
+            )
 
     def _stop_and_recognize(self):
         """停止录音并进行识别"""

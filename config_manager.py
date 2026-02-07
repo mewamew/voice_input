@@ -319,6 +319,10 @@ class ConfigManager:
             "device_id": None,
             "device_name": "自动（跟随系统）"
         },
+        "recording": {
+            "max_duration": 60,        # 最长录音时长（秒），默认 60 秒
+            "silence_timeout": 3       # 静音超时时间（秒），默认 3 秒
+        },
         "asr": {
             "api_key": "",
             "model": "qwen3-asr-flash",
@@ -447,6 +451,30 @@ class ConfigManager:
         """设置麦克风"""
         self._config["microphone"]["device_id"] = device_id
         self._config["microphone"]["device_name"] = device_name
+        self._save_config()
+
+    # ========== 录音配置 ==========
+
+    @property
+    def recording_max_duration(self) -> int:
+        """获取最长录音时长（秒）"""
+        return self._config["recording"].get("max_duration", 60)
+
+    @recording_max_duration.setter
+    def recording_max_duration(self, value: int):
+        """设置最长录音时长（10-120 秒）"""
+        self._config["recording"]["max_duration"] = max(10, min(120, value))
+        self._save_config()
+
+    @property
+    def recording_silence_timeout(self) -> int:
+        """获取静音超时时间（秒）"""
+        return self._config["recording"].get("silence_timeout", 3)
+
+    @recording_silence_timeout.setter
+    def recording_silence_timeout(self, value: int):
+        """设置静音超时时间（2-10 秒）"""
+        self._config["recording"]["silence_timeout"] = max(2, min(10, value))
         self._save_config()
 
     # ========== ASR 配置 ==========

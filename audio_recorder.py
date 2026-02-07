@@ -2,17 +2,21 @@
 录音模块 - 支持开始/停止控制的流式录音
 """
 import threading
-from typing import Optional
+import time
+from typing import Optional, Callable
 import numpy as np
 import sounddevice as sd
 import scipy.io.wavfile as wav
 import io
 import base64
+import webrtcvad
 
 
 # 录音参数
 SAMPLE_RATE = 16000  # 采样率
 CHANNELS = 1  # 单声道
+VAD_FRAME_MS = 30  # VAD 帧长度（毫秒），可选 10, 20, 30
+VAD_FRAME_SAMPLES = int(SAMPLE_RATE * VAD_FRAME_MS / 1000)  # 480 samples for 30ms
 
 
 class AudioRecorder:
@@ -35,19 +39,49 @@ class AudioRecorder:
         self._stream = None
         self._lock = threading.Lock()
 
+        # VAD 相关
+        self._vad = webrtcvad.Vad(3)  # 敏感度 0-3，3 最敏感
+        self._vad_buffer = np.array([], dtype=np.int16)  # 用于累积音频数据
+
+        # 自动停止相关属性
+        self._start_time: float = 0
+        self._last_voice_time: float = 0
+        self._max_duration: int = 60
+        self._silence_timeout: int = 3
+        self._auto_stop_callback: Optional[Callable[[str], None]] = None
+        self._auto_stop_reason: Optional[str] = None
+        self._auto_stopped: bool = False
+
     def set_device(self, device_id: Optional[int]):
         """设置录音设备"""
         with self._lock:
             self.device_id = device_id
 
-    def start(self):
-        """开始录音"""
+    def start(self, max_duration: int = 60, silence_timeout: int = 3,
+               on_auto_stop: Optional[Callable[[str], None]] = None):
+        """开始录音
+
+        Args:
+            max_duration: 最长录音时长（秒）
+            silence_timeout: 静音超时时间（秒）
+            on_auto_stop: 自动停止时的回调函数，参数为停止原因 ('timeout' / 'silence')
+        """
         with self._lock:
             if self._recording:
                 return
 
             self._audio_chunks = []
+            self._vad_buffer = np.array([], dtype=np.int16)
             self._recording = True
+
+            # 初始化自动停止相关属性
+            self._start_time = time.time()
+            self._last_voice_time = time.time()
+            self._max_duration = max_duration
+            self._silence_timeout = silence_timeout
+            self._auto_stop_callback = on_auto_stop
+            self._auto_stop_reason = None
+            self._auto_stopped = False
 
             # 创建输入流
             self._stream = sd.InputStream(
@@ -92,8 +126,63 @@ class AudioRecorder:
 
     def _audio_callback(self, indata, frames, time_info, status):
         """音频流回调函数"""
-        if self._recording:
-            self._audio_chunks.append(indata.copy())
+        if not self._recording or self._auto_stopped:
+            return
+
+        # 保存音频数据
+        self._audio_chunks.append(indata.copy())
+
+        # 将新数据添加到 VAD 缓冲区
+        chunk = indata.flatten()
+        self._vad_buffer = np.concatenate([self._vad_buffer, chunk])
+
+        current_time = time.time()
+
+        # 按帧处理 VAD 检测
+        while len(self._vad_buffer) >= VAD_FRAME_SAMPLES:
+            frame = self._vad_buffer[:VAD_FRAME_SAMPLES]
+            self._vad_buffer = self._vad_buffer[VAD_FRAME_SAMPLES:]
+
+            # 转换为 bytes 进行 VAD 检测
+            frame_bytes = frame.tobytes()
+            try:
+                if self._vad.is_speech(frame_bytes, self.sample_rate):
+                    self._last_voice_time = current_time
+            except Exception:
+                # VAD 检测失败时忽略
+                pass
+
+        # 检查是否超过最大时长
+        if current_time - self._start_time >= self._max_duration:
+            self._trigger_auto_stop('timeout')
+            return
+
+        # 检查静音是否超时
+        if current_time - self._last_voice_time >= self._silence_timeout:
+            self._trigger_auto_stop('silence')
+            return
+
+    def _trigger_auto_stop(self, reason: str):
+        """触发自动停止"""
+        if self._auto_stopped:
+            return
+
+        self._auto_stopped = True
+        self._auto_stop_reason = reason
+
+        # 在新线程中调用回调，避免阻塞音频回调
+        if self._auto_stop_callback:
+            threading.Thread(target=self._auto_stop_callback, args=(reason,), daemon=True).start()
+
+    def get_recording_duration(self) -> float:
+        """获取当前录音时长（秒）"""
+        if not self._recording:
+            return 0
+        return time.time() - self._start_time
+
+    def get_auto_stop_reason(self) -> Optional[str]:
+        """获取自动停止原因"""
+        return self._auto_stop_reason
 
 
 def audio_to_base64(audio_data: np.ndarray, sample_rate: int = SAMPLE_RATE) -> str:
