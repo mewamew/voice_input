@@ -1,0 +1,1332 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>语音输入设置</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: #f5f5f7;
+            color: #1d1d1f;
+            line-height: 1.5;
+        }
+
+        .container {
+            display: flex;
+            max-width: 900px;
+            margin: 40px auto;
+            background: #fff;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+            overflow: hidden;
+        }
+
+        /* 侧边栏 */
+        .sidebar {
+            width: 200px;
+            min-width: 200px;
+            background: #fafafa;
+            border-right: 1px solid #e5e5e5;
+            padding: 20px 0;
+        }
+
+        .sidebar-title {
+            font-size: 18px;
+            font-weight: 600;
+            padding: 0 20px 20px;
+            border-bottom: 1px solid #e5e5e5;
+            margin-bottom: 10px;
+        }
+
+        .nav-item {
+            display: flex;
+            align-items: center;
+            padding: 12px 20px;
+            cursor: pointer;
+            transition: background 0.2s;
+            color: #666;
+            white-space: nowrap;
+        }
+
+        .nav-item:hover {
+            background: #f0f0f0;
+        }
+
+        .nav-item.active {
+            background: #e8e8e8;
+            color: #1d1d1f;
+            font-weight: 500;
+        }
+
+        .nav-icon {
+            margin-right: 10px;
+            font-size: 18px;
+        }
+
+        /* 内容区 */
+        .content {
+            flex: 1;
+            padding: 30px;
+            min-height: 400px;
+            min-width: 0;
+            overflow: hidden;
+        }
+
+        .section {
+            display: none;
+        }
+
+        .section.active {
+            display: block;
+        }
+
+        .section-title {
+            font-size: 22px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .section-desc {
+            color: #86868b;
+            margin-bottom: 24px;
+        }
+
+        /* 表单 */
+        .form-group {
+            margin-bottom: 24px;
+        }
+
+        .form-label {
+            display: block;
+            font-weight: 500;
+            margin-bottom: 8px;
+        }
+
+        .form-select, .form-input {
+            width: 100%;
+            padding: 10px 12px;
+            font-size: 15px;
+            border: 1px solid #d2d2d7;
+            border-radius: 8px;
+            background: #fff;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+
+        .form-select:focus, .form-input:focus {
+            outline: none;
+            border-color: #0071e3;
+            box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.15);
+        }
+
+        .form-hint {
+            font-size: 13px;
+            color: #86868b;
+            margin-top: 6px;
+        }
+
+        /* 保存提示 */
+        .toast {
+            position: fixed;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%) translateY(100px);
+            background: #1d1d1f;
+            color: #fff;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            opacity: 0;
+            transition: transform 0.3s, opacity 0.3s;
+        }
+
+        .toast.show {
+            transform: translateX(-50%) translateY(0);
+            opacity: 1;
+        }
+
+        /* 卡片样式 */
+        .card {
+            background: #fafafa;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .card-title {
+            font-weight: 500;
+            margin-bottom: 12px;
+        }
+
+        /* 开关样式 */
+        .toggle-container {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .toggle-label {
+            font-weight: 500;
+        }
+
+        .toggle-switch {
+            position: relative;
+            width: 50px;
+            height: 28px;
+        }
+
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #ccc;
+            transition: 0.3s;
+            border-radius: 28px;
+        }
+
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 22px;
+            width: 22px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: 0.3s;
+            border-radius: 50%;
+        }
+
+        .toggle-switch input:checked + .toggle-slider {
+            background-color: #0071e3;
+        }
+
+        .toggle-switch input:checked + .toggle-slider:before {
+            transform: translateX(22px);
+        }
+
+        .toggle-switch input:disabled + .toggle-slider {
+            background-color: #e0e0e0;
+            cursor: not-allowed;
+        }
+
+        .toggle-switch input:disabled + .toggle-slider:before {
+            background-color: #f5f5f5;
+        }
+
+        /* 文本框样式 */
+        .form-textarea {
+            width: 100%;
+            padding: 10px 12px;
+            font-size: 15px;
+            border: 1px solid #d2d2d7;
+            border-radius: 8px;
+            background: #fff;
+            transition: border-color 0.2s, box-shadow 0.2s;
+            resize: vertical;
+            min-height: 100px;
+            font-family: inherit;
+        }
+
+        .form-textarea:focus {
+            outline: none;
+            border-color: #0071e3;
+            box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.15);
+        }
+
+        /* 按钮样式 */
+        .btn {
+            padding: 10px 20px;
+            font-size: 14px;
+            font-weight: 500;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background 0.2s, opacity 0.2s;
+        }
+
+        .btn-primary {
+            background: #0071e3;
+            color: #fff;
+        }
+
+        .btn-primary:hover {
+            background: #0062cc;
+        }
+
+        .btn-primary:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .test-result {
+            margin-top: 12px;
+            padding: 10px 14px;
+            border-radius: 8px;
+            font-size: 14px;
+            display: none;
+        }
+
+        .test-result.success {
+            display: block;
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .test-result.error {
+            display: block;
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .test-result.loading {
+            display: block;
+            background: #e2e3e5;
+            color: #383d41;
+        }
+
+        /* 窗口大小选择器 */
+        .window-size-selector {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .window-size-btn {
+            width: 36px;
+            height: 36px;
+            border: 1px solid #d2d2d7;
+            border-radius: 8px;
+            background: #fff;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+
+        .window-size-btn:hover {
+            border-color: #0071e3;
+        }
+
+        .window-size-btn.active {
+            background: #0071e3;
+            color: #fff;
+            border-color: #0071e3;
+        }
+
+        /* 历史消息列表 */
+        .history-list {
+            max-height: 300px;
+            overflow-y: auto;
+            border: 1px solid #e5e5e5;
+            border-radius: 8px;
+            background: #fff;
+        }
+
+        .history-item {
+            display: flex;
+            align-items: center;
+            padding: 10px 12px;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
+        .history-item:last-child {
+            border-bottom: none;
+        }
+
+        .history-index {
+            font-size: 12px;
+            color: #86868b;
+            width: 24px;
+            flex-shrink: 0;
+        }
+
+        .history-text {
+            flex: 1;
+            font-size: 14px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .history-text.in-window {
+            color: #1d1d1f;
+        }
+
+        .history-text.out-window {
+            color: #86868b;
+        }
+
+        .history-actions {
+            display: flex;
+            gap: 8px;
+            margin-left: 12px;
+        }
+
+        .history-btn {
+            padding: 4px 10px;
+            font-size: 12px;
+            border: 1px solid #d2d2d7;
+            border-radius: 4px;
+            background: #fff;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .history-btn:hover {
+            background: #f5f5f5;
+        }
+
+        .history-btn.delete {
+            color: #dc3545;
+            border-color: #dc3545;
+        }
+
+        .history-btn.delete:hover {
+            background: #fff5f5;
+        }
+
+        .history-empty {
+            padding: 20px;
+            text-align: center;
+            color: #86868b;
+            font-size: 14px;
+        }
+
+        .clear-all-btn {
+            margin-top: 12px;
+        }
+
+        .btn-danger {
+            background: #dc3545;
+            color: #fff;
+        }
+
+        .btn-danger:hover {
+            background: #c82333;
+        }
+
+        .btn-secondary {
+            background: #f5f5f5;
+            color: #1d1d1f;
+            border: 1px solid #d2d2d7;
+        }
+
+        .btn-secondary:hover {
+            background: #e8e8e8;
+        }
+
+        /* 编辑模态框 */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal-overlay.show {
+            display: flex;
+        }
+
+        .modal {
+            background: #fff;
+            border-radius: 12px;
+            padding: 24px;
+            width: 90%;
+            max-width: 500px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+        }
+
+        .modal-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 16px;
+        }
+
+        .modal-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 12px;
+            margin-top: 20px;
+        }
+
+        .window-indicator {
+            font-size: 12px;
+            color: #0071e3;
+            margin-left: 8px;
+        }
+
+        /* 使用统计样式 */
+        .stats-summary {
+            display: flex;
+            gap: 40px;
+        }
+        .stat-item {
+            text-align: center;
+        }
+        .stat-value {
+            font-size: 32px;
+            font-weight: 600;
+            color: #0071e3;
+            display: block;
+        }
+        .stat-label {
+            font-size: 14px;
+            color: #86868b;
+        }
+        .stats-history-list {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .stats-history-item {
+            padding: 12px 0;
+            border-bottom: 1px solid #f0f0f0;
+        }
+        .stats-history-item:last-child {
+            border-bottom: none;
+        }
+        .stats-history-text {
+            font-size: 14px;
+            margin-bottom: 4px;
+            word-break: break-all;
+        }
+        .stats-history-time {
+            font-size: 12px;
+            color: #86868b;
+        }
+        .stats-loading {
+            text-align: center;
+            padding: 20px;
+            color: #86868b;
+        }
+        .stats-empty {
+            text-align: center;
+            padding: 40px 20px;
+            color: #86868b;
+            font-size: 14px;
+        }
+
+        /* 使用说明样式 */
+        .help-content {
+            font-size: 14px;
+            line-height: 1.8;
+        }
+
+        .help-content p {
+            margin-bottom: 12px;
+        }
+
+        .help-content ol, .help-content ul {
+            margin: 12px 0;
+            padding-left: 20px;
+        }
+
+        .help-content li {
+            margin-bottom: 6px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="sidebar">
+            <div class="sidebar-title">设置</div>
+            <div class="nav-item" data-section="microphone">
+                <span class="nav-icon">🎤</span>
+                <span>麦克风</span>
+            </div>
+            <div class="nav-item" data-section="asr">
+                <span class="nav-icon">🧠</span>
+                <span>语音识别模型</span>
+            </div>
+            <div class="nav-item active" data-section="llm">
+                <span class="nav-icon">🤖</span>
+                <span>大语言模型</span>
+            </div>
+            <div class="nav-item" data-section="stats">
+                <span class="nav-icon">📊</span>
+                <span>使用统计</span>
+            </div>
+            <div class="nav-item" data-section="help">
+                <span class="nav-icon">📖</span>
+                <span>使用说明</span>
+            </div>
+        </div>
+
+        <div class="content">
+            <!-- 麦克风设置 -->
+            <div id="microphone" class="section">
+                <h2 class="section-title">麦克风</h2>
+                <p class="section-desc">选择音频输入设备</p>
+
+                <div class="card">
+                    <div class="form-group">
+                        <label class="form-label">输入设备</label>
+                        <select id="microphone-select" class="form-select">
+                            <option value="">自动（跟随系统）</option>
+                        </select>
+                        <p class="form-hint">选择用于语音输入的麦克风设备</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 语音识别模型设置 -->
+            <div id="asr" class="section">
+                <h2 class="section-title">语音识别模型</h2>
+                <p class="section-desc">配置语音识别服务</p>
+
+                <div class="card">
+                    <div class="form-group">
+                        <label class="form-label">API Key</label>
+                        <input type="password" id="api-key" class="form-input" placeholder="请输入 API Key">
+                        <p class="form-hint">阿里云 DashScope API Key，留空则使用环境变量 DASHSCOPE_API_KEY</p>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">模型</label>
+                        <select id="asr-model" class="form-select">
+                            <option value="qwen3-asr-flash">qwen3-asr-flash（推荐）</option>
+                            <option value="qwen2-audio-instruct">qwen2-audio-instruct</option>
+                        </select>
+                        <p class="form-hint">选择语音识别模型</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 大语言模型设置 -->
+            <div id="llm" class="section active">
+                <h2 class="section-title">大语言模型</h2>
+                <p class="section-desc">配置 LLM 服务和语音纠错功能</p>
+
+                <div class="card">
+                    <div class="form-group">
+                        <label class="form-label">API Key</label>
+                        <input type="password" id="llm-api-key" class="form-input" placeholder="请输入 API Key">
+                        <p class="form-hint">DeepSeek API Key，留空则使用环境变量 DEEPSEEK_API_KEY</p>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">模型提供商</label>
+                        <select id="llm-provider" class="form-select">
+                            <option value="deepseek">DeepSeek</option>
+                        </select>
+                        <p class="form-hint">选择大语言模型提供商</p>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">模型</label>
+                        <select id="llm-model" class="form-select">
+                            <option value="deepseek-chat">deepseek-chat</option>
+                            <option value="deepseek-reasoner">deepseek-reasoner</option>
+                        </select>
+                        <p class="form-hint">选择具体模型</p>
+                    </div>
+
+                    <div class="form-group">
+                        <button id="test-llm-btn" class="btn btn-primary" disabled>测试 API 连接</button>
+                        <div id="test-result" class="test-result"></div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">语音纠错</div>
+
+                    <div class="form-group">
+                        <div class="toggle-container">
+                            <span class="toggle-label">启用纠错功能</span>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="llm-correction-enabled">
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                        <p class="form-hint" id="correction-hint">开启后，语音识别结果会经过 LLM 进行纠错</p>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">纠错提示词</label>
+                        <textarea id="llm-correction-prompt" class="form-textarea" placeholder="请输入纠错提示词"></textarea>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">上下文纠错</div>
+
+                    <div class="form-group">
+                        <div class="toggle-container">
+                            <span class="toggle-label">启用上下文纠错</span>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="context-correction-enabled">
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                        <p class="form-hint" id="context-correction-hint">根据历史对话上下文纠正当前识别结果</p>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">观察历史消息数量</label>
+                        <div class="window-size-selector" id="window-size-selector">
+                            <button class="window-size-btn" data-size="1">1</button>
+                            <button class="window-size-btn" data-size="2">2</button>
+                            <button class="window-size-btn" data-size="3">3</button>
+                            <button class="window-size-btn" data-size="4">4</button>
+                            <button class="window-size-btn" data-size="5">5</button>
+                            <button class="window-size-btn" data-size="6">6</button>
+                            <button class="window-size-btn" data-size="7">7</button>
+                            <button class="window-size-btn" data-size="8">8</button>
+                            <button class="window-size-btn" data-size="9">9</button>
+                            <button class="window-size-btn" data-size="10">10</button>
+                        </div>
+                        <p class="form-hint">选择用于纠错参考的历史消息条数（1-10）</p>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">上下文纠错提示词</label>
+                        <textarea id="context-correction-prompt" class="form-textarea" placeholder="请输入上下文纠错提示词"></textarea>
+                        <p class="form-hint">使用 {history} 和 {current} 作为占位符</p>
+                    </div>
+
+                    <div class="form-group">
+                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                            <label class="form-label" style="margin-bottom: 0;">历史消息</label>
+                            <button id="refresh-history-btn" class="btn btn-secondary" style="padding: 6px 12px; font-size: 12px;">刷新</button>
+                        </div>
+                        <div class="history-list" id="history-list">
+                            <div class="history-empty">暂无历史消息</div>
+                        </div>
+                        <button id="clear-history-btn" class="btn btn-danger clear-all-btn" style="display: none;">清空全部</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 使用统计 -->
+            <div id="stats" class="section">
+                <h2 class="section-title">使用统计</h2>
+                <p class="section-desc">查看语音输入使用情况</p>
+
+                <div class="card">
+                    <div class="stats-summary">
+                        <div class="stat-item">
+                            <span class="stat-value" id="total-chars">0</span>
+                            <span class="stat-label">总输入字数</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-value" id="total-count">0</span>
+                            <span class="stat-label">消息条数</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">历史消息</div>
+                    <div class="stats-history-list" id="stats-history-list">
+                        <!-- 动态加载 -->
+                    </div>
+                    <div id="stats-loading" class="stats-loading" style="display: none;">加载中...</div>
+                </div>
+            </div>
+
+            <!-- 使用说明 -->
+            <div id="help" class="section">
+                <h2 class="section-title">使用说明</h2>
+                <p class="section-desc">快速上手语音输入</p>
+
+                <div class="card">
+                    <div class="card-title">基本操作</div>
+                    <div class="help-content">
+                        <p><strong>1. 开始录音</strong></p>
+                        <p>按下录音快捷键（默认 Right Command）开始录音，状态栏图标变为麦克风。</p>
+
+                        <p><strong>2. 停止录音</strong></p>
+                        <p>再次按下快捷键停止录音，系统自动进行语音识别。</p>
+
+                        <p><strong>3. 文字输入</strong></p>
+                        <p>识别完成后，文字会自动输入到当前光标位置。</p>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">双击更新历史</div>
+                    <div class="help-content">
+                        <p>当语音识别结果有误时：</p>
+                        <ol>
+                            <li>手动修改识别结果</li>
+                            <li>复制修改后的文本</li>
+                            <li>快速双击录音快捷键（间隔 &lt; 0.4秒）</li>
+                            <li>系统会用剪贴板内容更新历史中最新的一条消息</li>
+                        </ol>
+                        <p>这样可以确保上下文纠错功能使用正确的历史记录。</p>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">纠错功能</div>
+                    <div class="help-content">
+                        <p><strong>语音纠错</strong></p>
+                        <p>开启后，识别结果会经过大语言模型纠正错别字、语法和标点。</p>
+
+                        <p><strong>上下文纠错</strong></p>
+                        <p>根据历史对话上下文，纠正专有名词、人名等容易识别错误的词汇。</p>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">系统权限</div>
+                    <div class="help-content">
+                        <p>应用需要以下权限才能正常工作：</p>
+                        <ul>
+                            <li><strong>麦克风权限</strong> - 录制语音</li>
+                            <li><strong>辅助功能权限</strong> - 模拟键盘输入文字</li>
+                            <li><strong>输入监控权限</strong> - 监听快捷键</li>
+                        </ul>
+                        <p>请在 系统设置 → 隐私与安全性 中授予相应权限。</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 编辑历史消息模态框 -->
+    <div id="edit-modal" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-title">编辑历史消息</div>
+            <textarea id="edit-history-text" class="form-textarea" style="min-height: 80px;"></textarea>
+            <div class="modal-actions">
+                <button id="cancel-edit-btn" class="btn btn-secondary">取消</button>
+                <button id="save-edit-btn" class="btn btn-primary">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="toast" class="toast">已保存</div>
+
+    <script>
+        // 导航切换
+        document.querySelectorAll('.nav-item').forEach(item => {
+            item.addEventListener('click', () => {
+                // 更新导航状态
+                document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+                item.classList.add('active');
+
+                // 切换内容区
+                const sectionId = item.dataset.section;
+                document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+                document.getElementById(sectionId).classList.add('active');
+
+                // 切换到使用统计时加载数据
+                if (sectionId === 'stats') {
+                    loadUsageStats(true);  // 重置并加载
+                }
+            });
+        });
+
+        // ========== 使用统计相关 ==========
+        let statsCurrentPage = 0;
+        let statsHasMore = true;
+        let statsLoading = false;
+
+        // 格式化时间显示
+        function formatTime(isoString) {
+            if (!isoString || isoString === '1970-01-01T00:00:00') {
+                return '未知时间';
+            }
+            const date = new Date(isoString);
+            const now = new Date();
+            const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+            const yesterday = new Date(today.getTime() - 24 * 60 * 60 * 1000);
+            const msgDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+
+            const hours = date.getHours().toString().padStart(2, '0');
+            const minutes = date.getMinutes().toString().padStart(2, '0');
+            const time = `${hours}:${minutes}`;
+
+            if (msgDate.getTime() === today.getTime()) {
+                return `今天 ${time}`;
+            } else if (msgDate.getTime() === yesterday.getTime()) {
+                return `昨天 ${time}`;
+            } else if (date.getFullYear() === now.getFullYear()) {
+                return `${date.getMonth() + 1}月${date.getDate()}日 ${time}`;
+            } else {
+                return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日 ${time}`;
+            }
+        }
+
+        // 加载使用统计
+        async function loadUsageStats(reset = false) {
+            if (statsLoading) return;
+            if (!reset && !statsHasMore) return;
+
+            if (reset) {
+                statsCurrentPage = 0;
+                statsHasMore = true;
+                document.getElementById('stats-history-list').innerHTML = '';
+            }
+
+            statsLoading = true;
+            document.getElementById('stats-loading').style.display = 'block';
+
+            try {
+                const response = await fetch(`/api/usage-stats?page=${statsCurrentPage}&page_size=20`);
+                const data = await response.json();
+
+                // 更新统计数字
+                document.getElementById('total-chars').textContent = data.total_chars.toLocaleString();
+                document.getElementById('total-count').textContent = data.total_count.toLocaleString();
+
+                // 渲染历史消息
+                const listEl = document.getElementById('stats-history-list');
+                if (data.total_count === 0 && statsCurrentPage === 0) {
+                    listEl.innerHTML = '<div class="stats-empty">暂无历史消息</div>';
+                } else {
+                    const html = data.history.map(item => `
+                        <div class="stats-history-item">
+                            <div class="stats-history-text">${escapeHtml(item.text)}</div>
+                            <div class="stats-history-time">${formatTime(item.timestamp)}</div>
+                        </div>
+                    `).join('');
+                    listEl.insertAdjacentHTML('beforeend', html);
+                }
+
+                statsHasMore = data.has_more;
+                statsCurrentPage++;
+            } catch (error) {
+                console.error('加载统计失败:', error);
+            } finally {
+                statsLoading = false;
+                document.getElementById('stats-loading').style.display = 'none';
+            }
+        }
+
+        // 监听统计历史列表滚动
+        document.addEventListener('DOMContentLoaded', () => {
+            const statsListEl = document.getElementById('stats-history-list');
+            statsListEl.addEventListener('scroll', () => {
+                if (statsListEl.scrollTop + statsListEl.clientHeight >= statsListEl.scrollHeight - 50) {
+                    loadUsageStats();
+                }
+            });
+        });
+
+        // 显示保存提示
+        function showToast(message = '已保存') {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.classList.add('show');
+            setTimeout(() => toast.classList.remove('show'), 2000);
+        }
+
+        // 加载配置
+        async function loadConfig() {
+            try {
+                // 加载麦克风列表
+                const micsResponse = await fetch('/api/microphones');
+                const microphones = await micsResponse.json();
+
+                const micSelect = document.getElementById('microphone-select');
+                micSelect.innerHTML = '';
+                microphones.forEach(mic => {
+                    const option = document.createElement('option');
+                    option.value = mic.id === null ? '' : mic.id;
+                    option.textContent = mic.name;
+                    micSelect.appendChild(option);
+                });
+
+                // 加载当前配置
+                const configResponse = await fetch('/api/config');
+                const config = await configResponse.json();
+
+                // 设置麦克风选项
+                const deviceId = config.microphone.device_id;
+                micSelect.value = deviceId === null ? '' : deviceId;
+
+                // 设置 API Key
+                const apiKeyInput = document.getElementById('api-key');
+                if (config.asr.api_key_set) {
+                    apiKeyInput.placeholder = '已设置（输入新值覆盖）';
+                }
+
+                // 设置模型
+                document.getElementById('asr-model').value = config.asr.model;
+
+                // 设置 LLM 配置
+                const llmApiKeyInput = document.getElementById('llm-api-key');
+                if (config.llm.api_key_set) {
+                    llmApiKeyInput.placeholder = '已设置（输入新值覆盖）';
+                }
+                document.getElementById('llm-provider').value = config.llm.provider;
+                document.getElementById('llm-model').value = config.llm.model;
+                document.getElementById('llm-correction-prompt').value = config.llm.correction_prompt;
+
+                // 根据 API Key 是否设置来启用/禁用纠错开关和测试按钮
+                const correctionToggle = document.getElementById('llm-correction-enabled');
+                const correctionHint = document.getElementById('correction-hint');
+                const testBtn = document.getElementById('test-llm-btn');
+                const contextCorrectionToggle = document.getElementById('context-correction-enabled');
+                const contextCorrectionHint = document.getElementById('context-correction-hint');
+
+                if (config.llm.api_key_set) {
+                    correctionToggle.disabled = false;
+                    correctionToggle.checked = config.llm.correction_enabled;
+                    correctionHint.textContent = '开启后，语音识别结果会经过 LLM 进行纠错';
+                    testBtn.disabled = false;
+                    contextCorrectionToggle.disabled = false;
+                    contextCorrectionToggle.checked = config.llm.context_correction_enabled;
+                    contextCorrectionHint.textContent = '根据历史对话上下文纠正当前识别结果';
+                } else {
+                    correctionToggle.disabled = true;
+                    correctionToggle.checked = false;
+                    correctionHint.textContent = '请先设置 API Key 后再开启纠错功能';
+                    testBtn.disabled = true;
+                    contextCorrectionToggle.disabled = true;
+                    contextCorrectionToggle.checked = false;
+                    contextCorrectionHint.textContent = '请先设置 API Key 后再开启上下文纠错';
+                }
+
+                // 设置上下文窗口大小
+                const windowSize = config.llm.context_window_size || 5;
+                document.querySelectorAll('.window-size-btn').forEach(btn => {
+                    btn.classList.toggle('active', parseInt(btn.dataset.size) === windowSize);
+                });
+
+                // 设置上下文纠错提示词
+                document.getElementById('context-correction-prompt').value = config.llm.context_correction_prompt || '';
+
+                // 渲染历史消息列表
+                renderHistoryList(config.context_history || [], windowSize);
+
+            } catch (error) {
+                console.error('加载配置失败:', error);
+            }
+        }
+
+        // 当前窗口大小（用于高亮显示）
+        let currentWindowSize = 5;
+
+        // 渲染历史消息列表（显示窗口范围内的消息）
+        function renderHistoryList(history, windowSize) {
+            currentWindowSize = windowSize;
+            const listEl = document.getElementById('history-list');
+            const clearBtn = document.getElementById('clear-history-btn');
+
+            if (!history || history.length === 0) {
+                listEl.innerHTML = '<div class="history-empty">暂无历史消息</div>';
+                clearBtn.style.display = 'none';
+                return;
+            }
+
+            clearBtn.style.display = 'block';
+
+            // history 已经是窗口范围内的消息（由后端返回）
+            listEl.innerHTML = history.map((item, i) => {
+                const text = item.text;
+                const timestamp = item.timestamp;
+                return `
+                    <div class="history-item">
+                        <span class="history-text in-window" title="${escapeHtml(text)}">${escapeHtml(text)}</span>
+                        <div class="history-actions">
+                            <button class="history-btn" onclick="editHistory('${escapeHtml(timestamp)}')">编辑</button>
+                            <button class="history-btn delete" onclick="deleteHistory('${escapeHtml(timestamp)}')">删除</button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // HTML 转义
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // 编辑历史消息
+        let editingTimestamp = '';
+        function editHistory(timestamp) {
+            editingTimestamp = timestamp;
+            fetch('/api/context-history')
+                .then(res => res.json())
+                .then(data => {
+                    const history = data.history || [];
+                    const item = history.find(h => h.timestamp === timestamp);
+                    if (item) {
+                        document.getElementById('edit-history-text').value = item.text;
+                        document.getElementById('edit-modal').classList.add('show');
+                    }
+                });
+        }
+
+        // 删除历史消息
+        async function deleteHistory(timestamp) {
+            if (!confirm('确定要删除这条消息吗？')) return;
+
+            try {
+                await fetch(`/api/context-history/${encodeURIComponent(timestamp)}`, { method: 'DELETE' });
+                showToast('已删除');
+                // 重新加载历史
+                const res = await fetch('/api/config');
+                const config = await res.json();
+                renderHistoryList(config.context_history || [], currentWindowSize);
+            } catch (error) {
+                showToast('删除失败');
+            }
+        }
+
+        // 清空所有历史
+        async function clearAllHistory() {
+            if (!confirm('确定要清空所有历史消息吗？')) return;
+
+            try {
+                await fetch('/api/context-history', { method: 'DELETE' });
+                showToast('已清空');
+                renderHistoryList([], currentWindowSize);
+            } catch (error) {
+                showToast('清空失败');
+            }
+        }
+
+        // 保存编辑的历史消息
+        async function saveEditedHistory() {
+            const newText = document.getElementById('edit-history-text').value;
+            if (!newText.trim()) {
+                showToast('消息不能为空');
+                return;
+            }
+
+            try {
+                await fetch(`/api/context-history/${encodeURIComponent(editingTimestamp)}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text: newText })
+                });
+                showToast('已保存');
+                document.getElementById('edit-modal').classList.remove('show');
+                // 重新加载历史
+                const res = await fetch('/api/config');
+                const config = await res.json();
+                renderHistoryList(config.context_history || [], currentWindowSize);
+            } catch (error) {
+                showToast('保存失败');
+            }
+        }
+
+        // 保存麦克风设置
+        async function saveMicrophone() {
+            const select = document.getElementById('microphone-select');
+            const deviceId = select.value === '' ? null : parseInt(select.value);
+            const deviceName = select.options[select.selectedIndex].text;
+
+            try {
+                await fetch('/api/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        microphone: {
+                            device_id: deviceId,
+                            device_name: deviceName
+                        }
+                    })
+                });
+                showToast();
+            } catch (error) {
+                showToast('保存失败');
+            }
+        }
+
+        // 保存 ASR 设置
+        async function saveASR(field) {
+            const data = { asr: {} };
+
+            if (field === 'api_key') {
+                const value = document.getElementById('api-key').value;
+                if (value) {
+                    data.asr.api_key = value;
+                } else {
+                    return; // 空值不保存
+                }
+            } else if (field === 'model') {
+                data.asr.model = document.getElementById('asr-model').value;
+            }
+
+            try {
+                await fetch('/api/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+                showToast();
+
+                // 更新 placeholder
+                if (field === 'api_key') {
+                    document.getElementById('api-key').value = '';
+                    document.getElementById('api-key').placeholder = '已设置（输入新值覆盖）';
+                }
+            } catch (error) {
+                showToast('保存失败');
+            }
+        }
+
+        // 保存 LLM 设置
+        async function saveLLM(field, value) {
+            const data = { llm: {} };
+
+            if (field === 'api_key') {
+                const val = document.getElementById('llm-api-key').value;
+                if (val) {
+                    data.llm.api_key = val;
+                } else {
+                    return; // 空值不保存
+                }
+            } else if (field === 'provider') {
+                data.llm.provider = document.getElementById('llm-provider').value;
+            } else if (field === 'model') {
+                data.llm.model = document.getElementById('llm-model').value;
+            } else if (field === 'correction_enabled') {
+                data.llm.correction_enabled = document.getElementById('llm-correction-enabled').checked;
+            } else if (field === 'correction_prompt') {
+                data.llm.correction_prompt = document.getElementById('llm-correction-prompt').value;
+            } else if (field === 'context_correction_enabled') {
+                data.llm.context_correction_enabled = document.getElementById('context-correction-enabled').checked;
+            } else if (field === 'context_window_size') {
+                data.llm.context_window_size = value;
+            } else if (field === 'context_correction_prompt') {
+                data.llm.context_correction_prompt = document.getElementById('context-correction-prompt').value;
+            }
+
+            try {
+                await fetch('/api/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+                showToast();
+
+                // 更新 placeholder
+                if (field === 'api_key') {
+                    document.getElementById('llm-api-key').value = '';
+                    document.getElementById('llm-api-key').placeholder = '已设置（输入新值覆盖）';
+                    // 启用纠错开关和测试按钮
+                    document.getElementById('llm-correction-enabled').disabled = false;
+                    document.getElementById('correction-hint').textContent = '开启后，语音识别结果会经过 LLM 进行纠错';
+                    document.getElementById('test-llm-btn').disabled = false;
+                    // 启用上下文纠错开关
+                    document.getElementById('context-correction-enabled').disabled = false;
+                    document.getElementById('context-correction-hint').textContent = '根据历史对话上下文纠正当前识别结果';
+                }
+
+                // 更新窗口大小时，重新渲染历史列表
+                if (field === 'context_window_size') {
+                    currentWindowSize = value;
+                    const res = await fetch('/api/config');
+                    const config = await res.json();
+                    renderHistoryList(config.context_history || [], value);
+                }
+            } catch (error) {
+                showToast('保存失败');
+            }
+        }
+
+        // 测试 LLM API 连接
+        async function testLLM() {
+            const btn = document.getElementById('test-llm-btn');
+            const result = document.getElementById('test-result');
+
+            // 显示加载状态
+            btn.disabled = true;
+            btn.textContent = '测试中...';
+            result.className = 'test-result loading';
+            result.textContent = '正在连接 API...';
+
+            try {
+                const response = await fetch('/api/llm/test', { method: 'POST' });
+                const data = await response.json();
+
+                if (data.success) {
+                    result.className = 'test-result success';
+                    result.textContent = '✓ 连接成功：' + data.message;
+                } else {
+                    result.className = 'test-result error';
+                    result.textContent = '✗ 连接失败：' + data.message;
+                }
+            } catch (error) {
+                result.className = 'test-result error';
+                result.textContent = '✗ 请求失败：' + error.message;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '测试 API 连接';
+            }
+        }
+
+        // 绑定事件
+        document.getElementById('microphone-select').addEventListener('change', saveMicrophone);
+        document.getElementById('api-key').addEventListener('blur', () => saveASR('api_key'));
+        document.getElementById('asr-model').addEventListener('change', () => saveASR('model'));
+
+        // LLM 事件绑定
+        document.getElementById('llm-api-key').addEventListener('blur', () => saveLLM('api_key'));
+        document.getElementById('llm-provider').addEventListener('change', () => saveLLM('provider'));
+        document.getElementById('llm-model').addEventListener('change', () => saveLLM('model'));
+        document.getElementById('llm-correction-enabled').addEventListener('change', () => saveLLM('correction_enabled'));
+        document.getElementById('llm-correction-prompt').addEventListener('blur', () => saveLLM('correction_prompt'));
+        document.getElementById('test-llm-btn').addEventListener('click', testLLM);
+
+        // 上下文纠错事件绑定
+        document.getElementById('context-correction-enabled').addEventListener('change', () => saveLLM('context_correction_enabled'));
+        document.getElementById('context-correction-prompt').addEventListener('blur', () => saveLLM('context_correction_prompt'));
+
+        // 窗口大小选择
+        document.querySelectorAll('.window-size-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const size = parseInt(btn.dataset.size);
+                document.querySelectorAll('.window-size-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                saveLLM('context_window_size', size);
+            });
+        });
+
+        // 刷新历史按钮
+        document.getElementById('refresh-history-btn').addEventListener('click', async () => {
+            const res = await fetch('/api/config');
+            const config = await res.json();
+            renderHistoryList(config.context_history || [], currentWindowSize);
+            showToast('已刷新');
+        });
+
+        // 清空历史按钮
+        document.getElementById('clear-history-btn').addEventListener('click', clearAllHistory);
+
+        // 编辑模态框事件
+        document.getElementById('cancel-edit-btn').addEventListener('click', () => {
+            document.getElementById('edit-modal').classList.remove('show');
+        });
+        document.getElementById('save-edit-btn').addEventListener('click', saveEditedHistory);
+
+        // 点击模态框外部关闭
+        document.getElementById('edit-modal').addEventListener('click', (e) => {
+            if (e.target.id === 'edit-modal') {
+                document.getElementById('edit-modal').classList.remove('show');
+            }
+        });
+
+        // 页面加载时获取配置
+        loadConfig();
+    </script>
+</body>
+</html>
