@@ -658,12 +658,49 @@
         .help-content li {
             margin-bottom: 6px;
         }
+
+        /* 快捷键设置样式 */
+        .shortcut-display {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .shortcut-key {
+            display: inline-block;
+            padding: 12px 24px;
+            font-size: 18px;
+            font-weight: 600;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #fff;
+            border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .shortcut-record-btn {
+            min-width: 160px;
+            transition: all 0.3s;
+        }
+
+        .shortcut-record-btn.recording {
+            background: #ff9500;
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="sidebar">
             <div class="sidebar-title">设置</div>
+            <div class="nav-item" data-section="shortcut">
+                <span class="nav-icon">⌨️</span>
+                <span>快捷键</span>
+            </div>
             <div class="nav-item" data-section="microphone">
                 <span class="nav-icon">🎤</span>
                 <span>麦克风</span>
@@ -691,6 +728,38 @@
         </div>
 
         <div class="content">
+            <!-- 快捷键设置 -->
+            <div id="shortcut" class="section">
+                <h2 class="section-title">快捷键</h2>
+                <p class="section-desc">设置触发录音的快捷键</p>
+
+                <div class="card">
+                    <div class="form-group">
+                        <label class="form-label">当前快捷键</label>
+                        <div class="shortcut-display">
+                            <span id="current-shortcut" class="shortcut-key">Right Command</span>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">设置新快捷键</label>
+                        <button id="record-shortcut-btn" class="btn btn-primary shortcut-record-btn">
+                            点击录制
+                        </button>
+                        <p class="form-hint">点击按钮后，按下快捷键组合（如 Ctrl+Shift+A），松开非修饰键完成录制</p>
+                        <p class="form-hint" style="color: #ff9500;">按 Esc 取消录制</p>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">使用说明</div>
+                    <div class="help-content">
+                        <p><strong>单击</strong>：开始/停止录音</p>
+                        <p><strong>双击</strong>（间隔 &lt; 0.4秒）：用剪贴板内容更新最新历史</p>
+                    </div>
+                </div>
+            </div>
+
             <!-- 麦克风设置 -->
             <div id="microphone" class="section">
                 <h2 class="section-title">麦克风</h2>
@@ -1632,8 +1701,259 @@
             }
         });
 
+        // ========== 快捷键设置相关 ==========
+        let isRecordingShortcut = false;
+        let recordedModifiers = new Set();  // 当前按下的修饰键
+        let recordedMainKey = null;         // 主键
+
+        // 修饰键映射
+        const MODIFIER_KEY_MAP = {
+            'Control': 'ctrl',
+            'Alt': 'alt',
+            'Shift': 'shift',
+            'Meta': 'cmd',
+            'OS': 'cmd'
+        };
+
+        // 修饰键显示名称
+        const MODIFIER_DISPLAY = {
+            'ctrl': 'Ctrl',
+            'alt': 'Alt',
+            'shift': 'Shift',
+            'cmd': 'Cmd'
+        };
+
+        // 加载快捷键配置
+        async function loadShortcuts() {
+            try {
+                const response = await fetch('/api/shortcuts');
+                const data = await response.json();
+
+                // 更新当前快捷键显示
+                document.getElementById('current-shortcut').textContent = data.current.display;
+            } catch (error) {
+                console.error('加载快捷键失败:', error);
+            }
+        }
+
+        // 保存快捷键
+        async function saveShortcut(key, display) {
+            try {
+                await fetch('/api/shortcuts', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ key, display })
+                });
+                document.getElementById('current-shortcut').textContent = display;
+                showToast('快捷键已保存');
+            } catch (error) {
+                showToast('保存失败');
+            }
+        }
+
+        // 开始录制快捷键
+        function startRecordingShortcut() {
+            if (isRecordingShortcut) return;
+            isRecordingShortcut = true;
+            recordedModifiers.clear();
+            recordedMainKey = null;
+
+            const btn = document.getElementById('record-shortcut-btn');
+            btn.textContent = '等待按键...';
+            btn.classList.add('recording');
+
+            // 监听键盘事件
+            document.addEventListener('keydown', handleShortcutKeydown);
+            document.addEventListener('keyup', handleShortcutKeyup);
+        }
+
+        // 停止录制快捷键
+        function stopRecordingShortcut() {
+            isRecordingShortcut = false;
+            recordedModifiers.clear();
+            recordedMainKey = null;
+
+            const btn = document.getElementById('record-shortcut-btn');
+            btn.textContent = '点击录制';
+            btn.classList.remove('recording');
+
+            document.removeEventListener('keydown', handleShortcutKeydown);
+            document.removeEventListener('keyup', handleShortcutKeyup);
+        }
+
+        // 获取当前录制状态的显示文本
+        function getRecordingDisplayText() {
+            const parts = [];
+
+            // 按固定顺序添加修饰键
+            ['ctrl', 'alt', 'shift', 'cmd'].forEach(mod => {
+                if (recordedModifiers.has(mod)) {
+                    parts.push(MODIFIER_DISPLAY[mod]);
+                }
+            });
+
+            if (recordedMainKey) {
+                parts.push(recordedMainKey.display);
+            } else if (parts.length > 0) {
+                parts.push('...');
+            }
+
+            return parts.length > 0 ? parts.join(' + ') : '等待按键...';
+        }
+
+        // 处理快捷键按下
+        function handleShortcutKeydown(e) {
+            e.preventDefault();
+            e.stopPropagation();
+
+            // Esc 取消录制
+            if (e.key === 'Escape') {
+                stopRecordingShortcut();
+                showToast('已取消');
+                return;
+            }
+
+            const btn = document.getElementById('record-shortcut-btn');
+
+            // 检查是否是修饰键
+            if (MODIFIER_KEY_MAP[e.key]) {
+                const modKey = MODIFIER_KEY_MAP[e.key];
+                recordedModifiers.add(modKey);
+                btn.textContent = getRecordingDisplayText();
+                return;
+            }
+
+            // 非修饰键 - 作为主键
+            const mainKeyInfo = getMainKeyInfo(e);
+            if (mainKeyInfo) {
+                recordedMainKey = mainKeyInfo;
+                btn.textContent = getRecordingDisplayText();
+            }
+        }
+
+        // 处理快捷键释放
+        function handleShortcutKeyup(e) {
+            if (!isRecordingShortcut) return;
+
+            e.preventDefault();
+            e.stopPropagation();
+
+            // 检查是否是修饰键释放
+            if (MODIFIER_KEY_MAP[e.key]) {
+                const modKey = MODIFIER_KEY_MAP[e.key];
+
+                // 如果只有修饰键（单键模式），在释放时保存
+                if (recordedModifiers.has(modKey) && recordedModifiers.size === 1 && !recordedMainKey) {
+                    // 单个修饰键作为快捷键（向后兼容）
+                    const singleKeyInfo = getSingleModifierKeyInfo(e);
+                    if (singleKeyInfo) {
+                        stopRecordingShortcut();
+                        saveShortcut(singleKeyInfo.key, singleKeyInfo.display);
+                        return;
+                    }
+                }
+
+                recordedModifiers.delete(modKey);
+                const btn = document.getElementById('record-shortcut-btn');
+                btn.textContent = getRecordingDisplayText();
+                return;
+            }
+
+            // 非修饰键释放 - 完成录制
+            if (recordedMainKey) {
+                const shortcutInfo = buildShortcutInfo();
+                stopRecordingShortcut();
+                if (shortcutInfo) {
+                    saveShortcut(shortcutInfo.key, shortcutInfo.display);
+                }
+            }
+        }
+
+        // 获取主键信息
+        function getMainKeyInfo(e) {
+            const key = e.key;
+            const code = e.code;
+
+            // 功能键
+            if (code.startsWith('F') && code.length <= 3) {
+                const fNum = code.substring(1);
+                if (fNum >= 1 && fNum <= 12) {
+                    return { key: `f${fNum}`, display: `F${fNum}` };
+                }
+            }
+
+            // 特殊键
+            if (key === ' ' || code === 'Space') return { key: 'space', display: 'Space' };
+            if (key === 'Tab') return { key: 'tab', display: 'Tab' };
+            if (key === 'CapsLock') return { key: 'caps_lock', display: 'CapsLock' };
+
+            // 普通字符键（a-z, 0-9 等）
+            if (key.length === 1 && /[a-zA-Z0-9]/.test(key)) {
+                return { key: key.toLowerCase(), display: key.toUpperCase() };
+            }
+
+            return null;
+        }
+
+        // 获取单个修饰键的信息（向后兼容）
+        function getSingleModifierKeyInfo(e) {
+            const key = e.key;
+            const location = e.location;
+
+            if (key === 'Meta' || key === 'OS') {
+                if (location === 2) return { key: 'cmd_r', display: 'Right Command' };
+                return { key: 'cmd_l', display: 'Left Command' };
+            }
+            if (key === 'Control') {
+                if (location === 2) return { key: 'ctrl_r', display: 'Right Control' };
+                return { key: 'ctrl_l', display: 'Left Control' };
+            }
+            if (key === 'Alt') {
+                if (location === 2) return { key: 'alt_r', display: 'Right Alt/Option' };
+                return { key: 'alt_l', display: 'Left Alt/Option' };
+            }
+            if (key === 'Shift') {
+                if (location === 2) return { key: 'shift_r', display: 'Right Shift' };
+                return { key: 'shift_l', display: 'Left Shift' };
+            }
+
+            return null;
+        }
+
+        // 构建快捷键信息
+        function buildShortcutInfo() {
+            if (!recordedMainKey && recordedModifiers.size === 0) {
+                return null;
+            }
+
+            const keyParts = [];
+            const displayParts = [];
+
+            // 按固定顺序添加修饰键
+            ['ctrl', 'alt', 'shift', 'cmd'].forEach(mod => {
+                if (recordedModifiers.has(mod)) {
+                    keyParts.push(mod);
+                    displayParts.push(MODIFIER_DISPLAY[mod]);
+                }
+            });
+
+            if (recordedMainKey) {
+                keyParts.push(recordedMainKey.key);
+                displayParts.push(recordedMainKey.display);
+            }
+
+            return {
+                key: keyParts.join('+'),
+                display: displayParts.join(' + ')
+            };
+        }
+
+        // 绑定快捷键录制按钮事件
+        document.getElementById('record-shortcut-btn').addEventListener('click', startRecordingShortcut);
+
         // 页面加载时获取配置
         loadConfig();
+        loadShortcuts();
     </script>
 </body>
 </html>
