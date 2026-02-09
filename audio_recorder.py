@@ -83,15 +83,33 @@ class AudioRecorder:
             self._auto_stop_reason = None
             self._auto_stopped = False
 
-            # 创建输入流
-            self._stream = sd.InputStream(
-                device=self.device_id,
-                samplerate=self.sample_rate,
-                channels=self.channels,
-                dtype=np.int16,
-                callback=self._audio_callback
-            )
-            self._stream.start()
+            try:
+                # 创建输入流
+                self._stream = sd.InputStream(
+                    device=self.device_id,
+                    samplerate=self.sample_rate,
+                    channels=self.channels,
+                    dtype=np.int16,
+                    callback=self._audio_callback
+                )
+                self._stream.start()
+            except Exception:
+                # 启动失败时回滚状态，避免出现“显示录音中但实际未录音”
+                if self._stream:
+                    try:
+                        self._stream.close()
+                    except Exception:
+                        pass
+                self._stream = None
+                self._recording = False
+                self._audio_chunks = []
+                self._vad_buffer = np.array([], dtype=np.int16)
+                self._auto_stop_callback = None
+                self._auto_stop_reason = None
+                self._auto_stopped = False
+                self._start_time = 0
+                self._last_voice_time = 0
+                raise
 
     def stop(self) -> np.ndarray:
         """
@@ -109,8 +127,14 @@ class AudioRecorder:
             self._auto_stopped = True
 
             if self._stream:
-                self._stream.stop()
-                self._stream.close()
+                try:
+                    self._stream.stop()
+                except Exception:
+                    pass
+                try:
+                    self._stream.close()
+                except Exception:
+                    pass
                 self._stream = None
 
             # 合并所有音频块

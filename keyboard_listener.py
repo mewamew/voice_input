@@ -44,18 +44,21 @@ class KeyboardListener:
 
     # 时间阈值（秒）
     MIN_PRESS_TIME = 0.05   # 最短按下时间 50ms，避免误触
-    MAX_PRESS_TIME = 0.5    # 最长按下时间 500ms，超过认为是长按
+    MAX_PRESS_TIME = 1.5    # 最长按下时间 1.5s，避免正常按压被误判为长按
 
     def __init__(self, callback: Callable, shortcut_key: str = "cmd_r",
-                 double_click_callback: Callable = None):
+                 double_click_callback: Callable = None,
+                 should_handle_double_click: Optional[Callable[[], bool]] = None):
         """
         Args:
             callback: 快捷键触发时的回调函数
             shortcut_key: 快捷键标识（如 "cmd_r", "ctrl_l" 等）
             double_click_callback: 双击快捷键时的回调函数
+            should_handle_double_click: 是否允许处理双击的判断函数
         """
         self.callback = callback
         self.double_click_callback = double_click_callback
+        self.should_handle_double_click = should_handle_double_click
         self.listener = None
 
         # 当前监听的快捷键
@@ -126,26 +129,45 @@ class KeyboardListener:
                     self.MIN_PRESS_TIME <= press_duration <= self.MAX_PRESS_TIME):
                     current_time = time.time()
 
-                    if current_time - self._last_release_time <= DOUBLE_CLICK_INTERVAL:
+                    allow_double_click = self.double_click_callback is not None
+                    if allow_double_click and self.should_handle_double_click:
+                        try:
+                            allow_double_click = bool(self.should_handle_double_click())
+                        except Exception:
+                            allow_double_click = False
+
+                    # 仅当存在待执行单击时，才将当前点击识别为双击；
+                    # 这样可避免“第二次按键”因为双击判定被吞掉。
+                    is_double_click = (
+                        allow_double_click and
+                        self._pending_single_click is not None and
+                        current_time - self._last_release_time <= DOUBLE_CLICK_INTERVAL
+                    )
+
+                    if is_double_click:
                         # 双击检测：取消待执行的单击，执行双击回调
                         if self._pending_single_click:
                             self._pending_single_click.cancel()
                             self._pending_single_click = None
                         self._last_release_time = 0  # 重置，避免三击
-                        if self.double_click_callback:
-                            threading.Thread(target=self.double_click_callback, daemon=True).start()
+                        threading.Thread(target=self.double_click_callback, daemon=True).start()
                     else:
-                        # 可能是单击：延迟执行，等待看是否有双击
-                        self._last_release_time = current_time
-                        # 取消之前的待执行单击（如果有）
                         if self._pending_single_click:
                             self._pending_single_click.cancel()
-                        # 延迟执行单击回调
-                        self._pending_single_click = threading.Timer(
-                            DOUBLE_CLICK_INTERVAL,
-                            self._execute_single_click
-                        )
-                        self._pending_single_click.start()
+                            self._pending_single_click = None
+
+                        if allow_double_click:
+                            # 可能是单击：延迟执行，等待看是否有双击
+                            self._last_release_time = current_time
+                            self._pending_single_click = threading.Timer(
+                                DOUBLE_CLICK_INTERVAL,
+                                self._execute_single_click
+                            )
+                            self._pending_single_click.start()
+                        else:
+                            # 当前状态不需要双击，直接执行单击回调，保证停止录音及时响应
+                            self._last_release_time = 0
+                            self._trigger_single_click()
 
                 # 重置状态
                 self._key_pressed = False
@@ -156,6 +178,11 @@ class KeyboardListener:
         """执行单击回调"""
         with self._lock:
             self._pending_single_click = None
+            self._last_release_time = 0
+        self._trigger_single_click()
+
+    def _trigger_single_click(self):
+        """异步触发单击回调"""
         threading.Thread(target=self.callback, daemon=True).start()
 
 

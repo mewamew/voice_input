@@ -74,7 +74,8 @@ class VoiceInputApp(rumps.App):
         self.keyboard_listener = KeyboardListener(
             callback=self._on_shortcut,
             shortcut_key=self.config.shortcut_key,
-            double_click_callback=self._on_double_click
+            double_click_callback=self._on_double_click,
+            should_handle_double_click=self._can_handle_double_click
         )
 
         # 菜单项
@@ -135,6 +136,11 @@ class VoiceInputApp(rumps.App):
         with self._state_lock:
             current_state = self.state
 
+        # 自愈：状态显示为录音中，但录音器已经不在录音时，先回到空闲状态
+        if current_state == AppState.RECORDING and not self.recorder.is_recording():
+            self._set_state(AppState.IDLE)
+            return
+
         if current_state == AppState.IDLE:
             # 开始录音
             self._start_recording()
@@ -142,6 +148,11 @@ class VoiceInputApp(rumps.App):
             # 停止录音并识别
             self._stop_and_recognize()
         # PROCESSING 状态忽略按键
+
+    def _can_handle_double_click(self) -> bool:
+        """仅在空闲状态下启用双击功能"""
+        with self._state_lock:
+            return self.state == AppState.IDLE
 
     def _on_double_click(self):
         """双击快捷键回调 - 用剪贴板更新最新历史"""
@@ -174,11 +185,20 @@ class VoiceInputApp(rumps.App):
     def _start_recording(self):
         """开始录音"""
         self._set_state(AppState.RECORDING)
-        self.recorder.start(
-            max_duration=self.config.recording_max_duration,
-            silence_timeout=self.config.recording_silence_timeout,
-            on_auto_stop=self._on_auto_stop
-        )
+        try:
+            self.recorder.start(
+                max_duration=self.config.recording_max_duration,
+                silence_timeout=self.config.recording_silence_timeout,
+                on_auto_stop=self._on_auto_stop
+            )
+        except Exception as e:
+            self._set_state(AppState.IDLE)
+            rumps.notification(
+                title="语音输入",
+                subtitle="",
+                message=f"无法开始录音: {str(e)[:80]}",
+                sound=False
+            )
 
     def _on_auto_stop(self, reason: str):
         """处理自动停止事件
@@ -209,7 +229,17 @@ class VoiceInputApp(rumps.App):
         self._set_state(AppState.PROCESSING)
 
         # 停止录音
-        audio_data = self.recorder.stop()
+        try:
+            audio_data = self.recorder.stop()
+        except Exception as e:
+            rumps.notification(
+                title="语音输入",
+                subtitle="",
+                message=f"停止录音失败: {str(e)[:80]}",
+                sound=False
+            )
+            self._set_state(AppState.IDLE)
+            return
 
         if len(audio_data) == 0:
             rumps.notification(
