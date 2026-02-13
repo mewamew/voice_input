@@ -363,9 +363,12 @@ class ConfigManager:
             "silence_timeout": 3       # 静音超时时间（秒），默认 3 秒
         },
         "asr": {
+            "provider": "dashscope",
             "api_key": "",
             "model": "qwen3-asr-flash",
-            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "volcengine_app_key": "",
+            "volcengine_access_key": ""
         },
         "llm": {
             "api_key": "",
@@ -519,6 +522,17 @@ class ConfigManager:
     # ========== ASR 配置 ==========
 
     @property
+    def asr_provider(self) -> str:
+        """获取 ASR 提供商"""
+        return self._config["asr"].get("provider", "dashscope")
+
+    @asr_provider.setter
+    def asr_provider(self, value: str):
+        """设置 ASR 提供商"""
+        self._config["asr"]["provider"] = value
+        self._save_config()
+
+    @property
     def asr_api_key(self) -> str:
         """获取 ASR API Key"""
         return self._config["asr"]["api_key"]
@@ -556,6 +570,34 @@ class ConfigManager:
         if self.asr_api_key:
             return self.asr_api_key
         return os.getenv("DASHSCOPE_API_KEY")
+
+    @property
+    def volcengine_app_key(self) -> str:
+        """获取火山引擎 App Key"""
+        return self._config["asr"].get("volcengine_app_key", "")
+
+    @volcengine_app_key.setter
+    def volcengine_app_key(self, value: str):
+        """设置火山引擎 App Key"""
+        self._config["asr"]["volcengine_app_key"] = value
+        self._save_config()
+
+    @property
+    def volcengine_access_key(self) -> str:
+        """获取火山引擎 Access Key"""
+        return self._config["asr"].get("volcengine_access_key", "")
+
+    @volcengine_access_key.setter
+    def volcengine_access_key(self, value: str):
+        """设置火山引擎 Access Key"""
+        self._config["asr"]["volcengine_access_key"] = value
+        self._save_config()
+
+    def get_effective_volcengine_keys(self) -> dict:
+        """获取有效的火山引擎密钥（优先使用配置，其次环境变量）"""
+        app_key = self.volcengine_app_key or os.getenv("VOLCENGINE_APP_KEY", "")
+        access_key = self.volcengine_access_key or os.getenv("VOLCENGINE_ACCESS_KEY", "")
+        return {"app_key": app_key, "access_key": access_key}
 
     # ========== LLM 配置 ==========
 

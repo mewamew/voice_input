@@ -811,6 +811,19 @@
 
                 <div class="card">
                     <div class="form-group">
+                        <label class="form-label">识别引擎</label>
+                        <select id="asr-provider" class="form-select">
+                            <option value="dashscope">DashScope（阿里云）- 批处理模式</option>
+                            <option value="volcengine">火山引擎（豆包）- 流式模式</option>
+                        </select>
+                        <p class="form-hint">选择语音识别提供商。流式模式支持边录音边显示文字</p>
+                    </div>
+                </div>
+
+                <!-- DashScope 配置 -->
+                <div id="dashscope-config" class="card">
+                    <div class="card-title">DashScope 配置</div>
+                    <div class="form-group">
                         <label class="form-label">API Key</label>
                         <input type="password" id="api-key" class="form-input" placeholder="请输入 API Key">
                         <p class="form-hint">阿里云 DashScope API Key，留空则使用环境变量 DASHSCOPE_API_KEY</p>
@@ -823,6 +836,27 @@
                             <option value="qwen2-audio-instruct">qwen2-audio-instruct</option>
                         </select>
                         <p class="form-hint">选择语音识别模型</p>
+                    </div>
+                </div>
+
+                <!-- 火山引擎配置 -->
+                <div id="volcengine-config" class="card" style="display: none;">
+                    <div class="card-title">火山引擎配置</div>
+                    <div class="form-group">
+                        <label class="form-label">App Key</label>
+                        <input type="password" id="volcengine-app-key" class="form-input" placeholder="请输入 App Key">
+                        <p class="form-hint">火山引擎语音识别 App Key，留空则使用环境变量 VOLCENGINE_APP_KEY</p>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Access Key</label>
+                        <input type="password" id="volcengine-access-key" class="form-input" placeholder="请输入 Access Key">
+                        <p class="form-hint">火山引擎语音识别 Access Key，留空则使用环境变量 VOLCENGINE_ACCESS_KEY</p>
+                    </div>
+
+                    <div class="form-group">
+                        <button id="test-volcengine-btn" class="btn btn-primary" disabled>测试连接</button>
+                        <div id="test-volcengine-result" class="test-result"></div>
                     </div>
                 </div>
             </div>
@@ -1191,6 +1225,11 @@
                 const deviceId = config.microphone.device_id;
                 micSelect.value = deviceId === null ? '' : deviceId;
 
+                // 设置 ASR 提供商
+                const asrProvider = config.asr.provider || 'dashscope';
+                document.getElementById('asr-provider').value = asrProvider;
+                updateASRProviderUI(asrProvider);
+
                 // 设置 API Key
                 const apiKeyInput = document.getElementById('api-key');
                 if (config.asr.api_key_set) {
@@ -1199,6 +1238,18 @@
 
                 // 设置模型
                 document.getElementById('asr-model').value = config.asr.model;
+
+                // 设置火山引擎 Key
+                const volcAppKeyInput = document.getElementById('volcengine-app-key');
+                if (config.asr.volcengine_app_key_set) {
+                    volcAppKeyInput.placeholder = '已设置（输入新值覆盖）';
+                }
+                const volcAccessKeyInput = document.getElementById('volcengine-access-key');
+                if (config.asr.volcengine_access_key_set) {
+                    volcAccessKeyInput.placeholder = '已设置（输入新值覆盖）';
+                }
+                // 启用/禁用火山引擎测试按钮
+                document.getElementById('test-volcengine-btn').disabled = !(config.asr.volcengine_app_key_set || config.asr.volcengine_access_key_set);
 
                 // 设置录音配置
                 const maxDuration = config.recording?.max_duration || 60;
@@ -1473,19 +1524,48 @@
             }
         }
 
+        // 切换 ASR 提供商 UI
+        function updateASRProviderUI(provider) {
+            const dashscopeConfig = document.getElementById('dashscope-config');
+            const volcengineConfig = document.getElementById('volcengine-config');
+            if (provider === 'volcengine') {
+                dashscopeConfig.style.display = 'none';
+                volcengineConfig.style.display = 'block';
+            } else {
+                dashscopeConfig.style.display = 'block';
+                volcengineConfig.style.display = 'none';
+            }
+        }
+
         // 保存 ASR 设置
-        async function saveASR(field) {
+        async function saveASR(field, value) {
             const data = { asr: {} };
 
-            if (field === 'api_key') {
-                const value = document.getElementById('api-key').value;
-                if (value) {
-                    data.asr.api_key = value;
+            if (field === 'provider') {
+                data.asr.provider = value || document.getElementById('asr-provider').value;
+            } else if (field === 'api_key') {
+                const val = document.getElementById('api-key').value;
+                if (val) {
+                    data.asr.api_key = val;
                 } else {
                     return; // 空值不保存
                 }
             } else if (field === 'model') {
                 data.asr.model = document.getElementById('asr-model').value;
+            } else if (field === 'volcengine_app_key') {
+                const val = document.getElementById('volcengine-app-key').value;
+                if (val) {
+                    data.asr.volcengine_app_key = val;
+                } else {
+                    return;
+                }
+            } else if (field === 'volcengine_access_key') {
+                const val = document.getElementById('volcengine-access-key').value;
+                if (val) {
+                    data.asr.volcengine_access_key = val;
+                } else {
+                    return;
+                }
             }
 
             try {
@@ -1500,9 +1580,47 @@
                 if (field === 'api_key') {
                     document.getElementById('api-key').value = '';
                     document.getElementById('api-key').placeholder = '已设置（输入新值覆盖）';
+                } else if (field === 'volcengine_app_key') {
+                    document.getElementById('volcengine-app-key').value = '';
+                    document.getElementById('volcengine-app-key').placeholder = '已设置（输入新值覆盖）';
+                    document.getElementById('test-volcengine-btn').disabled = false;
+                } else if (field === 'volcengine_access_key') {
+                    document.getElementById('volcengine-access-key').value = '';
+                    document.getElementById('volcengine-access-key').placeholder = '已设置（输入新值覆盖）';
+                    document.getElementById('test-volcengine-btn').disabled = false;
                 }
             } catch (error) {
                 showToast('保存失败');
+            }
+        }
+
+        // 测试火山引擎连接
+        async function testVolcengine() {
+            const btn = document.getElementById('test-volcengine-btn');
+            const result = document.getElementById('test-volcengine-result');
+
+            btn.disabled = true;
+            btn.textContent = '测试中...';
+            result.className = 'test-result loading';
+            result.textContent = '正在连接 WebSocket...';
+
+            try {
+                const response = await fetch('/api/asr/test-volcengine', { method: 'POST' });
+                const data = await response.json();
+
+                if (data.success) {
+                    result.className = 'test-result success';
+                    result.textContent = '✓ ' + data.message;
+                } else {
+                    result.className = 'test-result error';
+                    result.textContent = '✗ ' + data.message;
+                }
+            } catch (error) {
+                result.className = 'test-result error';
+                result.textContent = '✗ 请求失败：' + error.message;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '测试连接';
             }
         }
 
@@ -1623,8 +1741,16 @@
 
         // 绑定事件
         document.getElementById('microphone-select').addEventListener('change', saveMicrophone);
+        document.getElementById('asr-provider').addEventListener('change', () => {
+            const provider = document.getElementById('asr-provider').value;
+            updateASRProviderUI(provider);
+            saveASR('provider', provider);
+        });
         document.getElementById('api-key').addEventListener('blur', () => saveASR('api_key'));
         document.getElementById('asr-model').addEventListener('change', () => saveASR('model'));
+        document.getElementById('volcengine-app-key').addEventListener('blur', () => saveASR('volcengine_app_key'));
+        document.getElementById('volcengine-access-key').addEventListener('blur', () => saveASR('volcengine_access_key'));
+        document.getElementById('test-volcengine-btn').addEventListener('click', testVolcengine);
 
         // 录音设置事件绑定
         const maxDurationSlider = document.getElementById('max-duration-slider');

@@ -10,6 +10,7 @@ from pydantic import BaseModel
 import sounddevice as sd
 
 from config_manager import get_config, get_history_manager
+from keyboard_listener import get_available_shortcuts
 
 app = FastAPI(title="语音输入设置")
 
@@ -25,8 +26,11 @@ class MicrophoneConfig(BaseModel):
 
 class ASRConfig(BaseModel):
     """ASR 配置"""
+    provider: Optional[str] = None
     api_key: Optional[str] = None
     model: Optional[str] = None
+    volcengine_app_key: Optional[str] = None
+    volcengine_access_key: Optional[str] = None
 
 
 class LLMConfig(BaseModel):
@@ -82,6 +86,20 @@ async def get_config_api():
     else:
         masked_key = ""
 
+    # 火山引擎 App Key 部分隐藏
+    volc_app_key = config.volcengine_app_key
+    if volc_app_key and len(volc_app_key) > 8:
+        masked_volc_app_key = volc_app_key[:4] + "*" * (len(volc_app_key) - 8) + volc_app_key[-4:]
+    else:
+        masked_volc_app_key = ""
+
+    # 火山引擎 Access Key 部分隐藏
+    volc_access_key = config.volcengine_access_key
+    if volc_access_key and len(volc_access_key) > 8:
+        masked_volc_access_key = volc_access_key[:4] + "*" * (len(volc_access_key) - 8) + volc_access_key[-4:]
+    else:
+        masked_volc_access_key = ""
+
     # LLM API Key 部分隐藏
     llm_api_key = config.llm_api_key
     if llm_api_key and len(llm_api_key) > 8:
@@ -90,6 +108,10 @@ async def get_config_api():
         masked_llm_key = ""
 
     return {
+        "shortcut": {
+            "key": config.shortcut_key,
+            "display": config.shortcut_display
+        },
         "microphone": {
             "device_id": config.microphone_device_id,
             "device_name": config.microphone_device_name
@@ -99,9 +121,14 @@ async def get_config_api():
             "silence_timeout": config.recording_silence_timeout
         },
         "asr": {
+            "provider": config.asr_provider,
             "api_key": masked_key,
             "api_key_set": bool(api_key),
-            "model": config.asr_model
+            "model": config.asr_model,
+            "volcengine_app_key": masked_volc_app_key,
+            "volcengine_app_key_set": bool(volc_app_key),
+            "volcengine_access_key": masked_volc_access_key,
+            "volcengine_access_key_set": bool(volc_access_key),
         },
         "llm": {
             "api_key": masked_llm_key,
@@ -131,10 +158,16 @@ async def save_config_api(data: ConfigUpdate):
         )
 
     if data.asr:
+        if data.asr.provider is not None:
+            config.asr_provider = data.asr.provider
         if data.asr.api_key is not None:
             config.asr_api_key = data.asr.api_key
         if data.asr.model is not None:
             config.asr_model = data.asr.model
+        if data.asr.volcengine_app_key is not None:
+            config.volcengine_app_key = data.asr.volcengine_app_key
+        if data.asr.volcengine_access_key is not None:
+            config.volcengine_access_key = data.asr.volcengine_access_key
 
     if data.llm:
         if data.llm.api_key is not None:
@@ -203,6 +236,37 @@ async def test_llm_api():
         return {"success": False, "message": str(e)}
 
 
+@app.post("/api/asr/test-volcengine")
+async def test_volcengine_api():
+    """测试火山引擎 ASR API 连接"""
+    config = get_config()
+
+    keys = config.get_effective_volcengine_keys()
+    if not keys["app_key"] or not keys["access_key"]:
+        return {"success": False, "message": "未设置火山引擎 App Key 或 Access Key"}
+
+    try:
+        import asyncio
+        import websockets
+
+        ws_url = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel"
+        headers = {
+            "X-Api-App-Key": keys["app_key"],
+            "X-Api-Access-Key": keys["access_key"],
+            "X-Api-Resource-Id": "volc.bigasr.sauc.duration",
+            "X-Api-Request-Id": "test-connection",
+        }
+
+        # 尝试建立 WebSocket 连接（5 秒超时）
+        async with websockets.connect(ws_url, additional_headers=headers, close_timeout=5, open_timeout=5) as ws:
+            await ws.close()
+
+        return {"success": True, "message": "WebSocket 连接成功"}
+
+    except Exception as e:
+        return {"success": False, "message": str(e)}
+
+
 @app.get("/api/context-history")
 async def get_context_history():
     """获取历史消息列表（只返回窗口范围内的消息）"""
@@ -241,6 +305,33 @@ async def get_usage_stats(page: int = 0, page_size: int = 20):
     """获取使用统计和分页历史消息"""
     history_mgr = get_history_manager()
     return history_mgr.get_page(page, page_size)
+
+
+@app.get("/api/shortcuts")
+async def get_shortcuts():
+    """获取可用快捷键列表"""
+    config = get_config()
+    return {
+        "shortcuts": get_available_shortcuts(),
+        "current": {
+            "key": config.shortcut_key,
+            "display": config.shortcut_display
+        }
+    }
+
+
+class ShortcutConfig(BaseModel):
+    """快捷键配置"""
+    key: str
+    display: str
+
+
+@app.post("/api/shortcuts")
+async def set_shortcut(data: ShortcutConfig):
+    """设置快捷键"""
+    config = get_config()
+    config.set_shortcut(data.key, data.display)
+    return {"status": "ok"}
 
 
 @app.get("/api/microphones")

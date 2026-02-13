@@ -1,0 +1,6 @@
+# macOS 专用依赖
+-r common.txt
+
+rumps
+pyobjc-framework-Quartz
+pyobjc-framework-Cocoa

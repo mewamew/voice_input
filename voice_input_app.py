@@ -1,38 +1,29 @@
 """
-语音输入法 - macOS 状态栏应用
+语音输入法 - 跨平台状态栏/托盘应用
 
 使用可配置的快捷键触发录音，自动识别并输入文字
+支持 macOS 和 Windows
 """
 import os
+import sys
 import threading
 import webbrowser
 
-# 隐藏 Dock 图标（必须在导入 rumps 之前设置）
-from AppKit import NSApplication, NSApplicationActivationPolicyAccessory
-NSApplication.sharedApplication().setActivationPolicy_(NSApplicationActivationPolicyAccessory)
-
-import rumps
-from enum import Enum
 from openai import OpenAI
 
-from keyboard_listener import KeyboardListener
+from keyboard_listener import KeyboardListener, get_default_shortcut
 from audio_recorder import AudioRecorder, audio_to_base64
-from text_inputter import input_text
 from config_manager import get_config, get_history_manager
+from platform_support import IS_MACOS, IS_WINDOWS, get_platform_app, show_notification
+from platform_support.base import AppState
+from overlay_window import OverlayWindow
 
 # 设置服务端口
 SETTINGS_PORT = 18321
 
 
-class AppState(Enum):
-    """应用状态"""
-    IDLE = "idle"           # 空闲
-    RECORDING = "recording" # 录音中
-    PROCESSING = "processing"  # 识别处理中
-
-
-class VoiceInputApp(rumps.App):
-    """语音输入状态栏应用"""
+class VoiceInputApp:
+    """语音输入应用（跨平台）"""
 
     def __init__(self):
         # 获取脚本所在目录
@@ -42,26 +33,12 @@ class VoiceInputApp(rumps.App):
         self.icon_idle = os.path.join(self.app_dir, "microphone.slash.png")
         self.icon_recording = os.path.join(self.app_dir, "microphone.png")
 
-        # 初始化应用
-        super().__init__(
-            name="语音输入",
-            icon=self.icon_idle,
-            template=True,  # 使用模板图标，自动适应深色/浅色模式
-            quit_button="退出"
-        )
-
         # 配置
         self.config = get_config()
-        self._config_mtime = 0  # 配置文件修改时间
+        self._config_mtime = 0
 
         # 运行标志
         self._running = True
-
-        # 启动设置服务
-        self._start_settings_server()
-
-        # 启动配置监控
-        self._start_config_watcher()
 
         # 状态
         self.state = AppState.IDLE
@@ -69,6 +46,10 @@ class VoiceInputApp(rumps.App):
 
         # 录音器
         self.recorder = AudioRecorder(device_id=self.config.microphone_device_id)
+
+        # 流式识别相关
+        self._streaming_asr = None
+        self._overlay = OverlayWindow()
 
         # 键盘监听器
         self.keyboard_listener = KeyboardListener(
@@ -78,26 +59,19 @@ class VoiceInputApp(rumps.App):
             should_handle_double_click=self._can_handle_double_click
         )
 
-        # 菜单项
-        self.status_item = rumps.MenuItem("状态: 空闲")
-        self.status_item.set_callback(None)
-        self.stats_item = rumps.MenuItem("今日: 0 字 | 累计: 0 字")
-        self.stats_item.set_callback(None)
-        self.record_item = rumps.MenuItem("开始录音", callback=self._toggle_recording)
-        self.menu = [
-            self.status_item,
-            self.stats_item,
-            None,  # 分隔线
-            self.record_item,
-            rumps.MenuItem("设置...", callback=self._open_settings),
-        ]
+        # 创建平台应用
+        PlatformApp = get_platform_app()
+        self.platform_app = PlatformApp(
+            name="语音输入",
+            icon_idle=self.icon_idle,
+            icon_recording=self.icon_recording,
+            on_quit=self._on_quit
+        )
 
-        # 初始化统计显示
-        self._update_stats_display()
-
-    def _update_status(self, text: str):
-        """更新状态栏菜单中的状态文字"""
-        self.status_item.title = f"状态: {text}"
+    def _on_quit(self):
+        """退出回调"""
+        self._running = False
+        self.keyboard_listener.stop()
 
     def _update_stats_display(self):
         """更新统计显示"""
@@ -107,25 +81,13 @@ class VoiceInputApp(rumps.App):
 
         today_chars = today_stats.get("today_chars", 0)
         total_chars = stats.get("total_chars", 0)
-        self.stats_item.title = f"今日: {today_chars:,} 字 | 累计: {total_chars:,} 字"
+        self.platform_app.update_stats(today_chars, total_chars)
 
     def _set_state(self, new_state: AppState):
         """设置应用状态"""
         with self._state_lock:
             self.state = new_state
-
-            if new_state == AppState.IDLE:
-                self.icon = self.icon_idle
-                self._update_status("空闲")
-                self.record_item.title = "开始录音"
-            elif new_state == AppState.RECORDING:
-                self.icon = self.icon_recording
-                self._update_status("录音中...")
-                self.record_item.title = "结束录音"
-            elif new_state == AppState.PROCESSING:
-                self.icon = self.icon_idle
-                self._update_status("识别中...")
-                self.record_item.title = "识别中..."
+            self.platform_app.set_state(new_state)
 
     def _toggle_recording(self, _):
         """菜单录音按钮回调"""
@@ -142,12 +104,9 @@ class VoiceInputApp(rumps.App):
             return
 
         if current_state == AppState.IDLE:
-            # 开始录音
             self._start_recording()
         elif current_state == AppState.RECORDING:
-            # 停止录音并识别
             self._stop_and_recognize()
-        # PROCESSING 状态忽略按键
 
     def _can_handle_double_click(self) -> bool:
         """仅在空闲状态下启用双击功能"""
@@ -156,35 +115,40 @@ class VoiceInputApp(rumps.App):
 
     def _on_double_click(self):
         """双击快捷键回调 - 用剪贴板更新最新历史"""
-        import subprocess
-
-        # 只在 IDLE 状态下响应
         with self._state_lock:
             if self.state != AppState.IDLE:
                 return
 
         # 读取剪贴板
-        result = subprocess.run(['pbpaste'], capture_output=True, text=True)
-        clipboard_text = result.stdout.strip()
+        from platform_support import get_clipboard_reader
+        read_clipboard = get_clipboard_reader()
+        clipboard_text = read_clipboard()
 
         if not clipboard_text:
-            rumps.notification("语音输入", "", "剪贴板为空", sound=False)
+            self.platform_app.show_notification("语音输入", "", "剪贴板为空", sound=False)
             return
 
-        # 更新最新历史（标记为手动覆盖）
+        # 更新最新历史
         history_mgr = get_history_manager()
         recent = history_mgr.get_recent(1)
         if recent:
             history_mgr.update(recent[0]["timestamp"], clipboard_text, is_manual=True)
-            # 更新统计显示
             self._update_stats_display()
-            rumps.notification("语音输入", "", "已更新最新历史", sound=False)
+            self.platform_app.show_notification("语音输入", "", "已更新最新历史", sound=False)
         else:
-            rumps.notification("语音输入", "", "暂无历史消息", sound=False)
+            self.platform_app.show_notification("语音输入", "", "暂无历史消息", sound=False)
 
     def _start_recording(self):
         """开始录音"""
         self._set_state(AppState.RECORDING)
+
+        if self.config.asr_provider == "volcengine":
+            self._start_streaming_recording()
+        else:
+            self._start_batch_recording()
+
+    def _start_batch_recording(self):
+        """批处理模式录音（DashScope）"""
         try:
             self.recorder.start(
                 max_duration=self.config.recording_max_duration,
@@ -193,31 +157,87 @@ class VoiceInputApp(rumps.App):
             )
         except Exception as e:
             self._set_state(AppState.IDLE)
-            rumps.notification(
+            self.platform_app.show_notification(
                 title="语音输入",
                 subtitle="",
                 message=f"无法开始录音: {str(e)[:80]}",
                 sound=False
             )
 
-    def _on_auto_stop(self, reason: str):
-        """处理自动停止事件
+    def _start_streaming_recording(self):
+        """流式模式录音（火山引擎）"""
+        try:
+            from volcengine_asr import VolcengineStreamingASR
 
-        Args:
-            reason: 停止原因 ('timeout' / 'silence')
-        """
+            keys = self.config.get_effective_volcengine_keys()
+            if not keys["app_key"] or not keys["access_key"]:
+                raise ValueError("请在设置中配置火山引擎 App Key 和 Access Key")
+
+            # 创建流式 ASR 客户端
+            self._streaming_asr = VolcengineStreamingASR(
+                app_key=keys["app_key"],
+                access_key=keys["access_key"],
+                on_partial_result=self._on_streaming_partial,
+                on_final_result=self._on_streaming_final,
+                on_error=self._on_streaming_error,
+            )
+            self._streaming_asr.start()
+
+            # 显示浮动窗口
+            self._overlay.show("正在聆听...")
+
+            # 开始录音，音频数据通过回调转发给 ASR
+            self.recorder.start(
+                max_duration=self.config.recording_max_duration,
+                silence_timeout=self.config.recording_silence_timeout,
+                on_auto_stop=self._on_auto_stop,
+                on_audio_chunk=self._streaming_asr.feed_audio,
+            )
+        except Exception as e:
+            self._streaming_asr = None
+            self._overlay.hide()
+            self._set_state(AppState.IDLE)
+            self.platform_app.show_notification(
+                title="语音输入",
+                subtitle="",
+                message=f"流式识别启动失败: {str(e)[:80]}",
+                sound=False
+            )
+
+    def _on_streaming_partial(self, text: str):
+        """流式识别中间结果回调"""
+        self._overlay.update_text(text if text else "正在聆听...")
+
+    def _on_streaming_final(self, text: str):
+        """流式识别最终结果回调"""
+        if text:
+            self._overlay.update_text(text)
+
+    def _on_streaming_error(self, msg: str):
+        """流式识别错误回调"""
+        self._overlay.update_text("识别出错")
+
+    def _on_auto_stop(self, reason: str):
+        """处理自动停止事件"""
         with self._state_lock:
             if self.state != AppState.RECORDING:
                 return
 
         if reason == 'timeout':
-            # 超时：停止录音并进行识别
             self._stop_and_recognize()
         elif reason == 'silence':
-            # 静音超时：取消录音
+            # 流式模式下也需要清理
+            streaming_asr = self._streaming_asr
+            self._streaming_asr = None
+            if streaming_asr:
+                try:
+                    streaming_asr.stop()
+                except Exception:
+                    pass
+            self._overlay.hide()
             self._set_state(AppState.IDLE)
-            self.recorder.stop()  # 停止录音但不处理
-            rumps.notification(
+            self.recorder.stop()
+            self.platform_app.show_notification(
                 title="语音输入",
                 subtitle="",
                 message="录音已取消（未检测到声音）",
@@ -228,11 +248,51 @@ class VoiceInputApp(rumps.App):
         """停止录音并进行识别"""
         self._set_state(AppState.PROCESSING)
 
-        # 停止录音
+        # 流式模式：停止 ASR 并等待最终结果
+        if self._streaming_asr:
+            streaming_asr = self._streaming_asr
+            self._streaming_asr = None
+
+            try:
+                audio_data = self.recorder.stop()
+            except Exception:
+                pass
+
+            self._overlay.update_text("正在处理...")
+
+            def finalize_streaming():
+                try:
+                    final_text = streaming_asr.stop()
+                    self._overlay.hide()
+
+                    if final_text and final_text.strip():
+                        self._correct_and_input(final_text)
+                    else:
+                        self.platform_app.show_notification(
+                            title="语音输入",
+                            subtitle="",
+                            message="未识别到文字",
+                            sound=False
+                        )
+                        self._set_state(AppState.IDLE)
+                except Exception as e:
+                    self._overlay.hide()
+                    self.platform_app.show_notification(
+                        title="语音输入",
+                        subtitle="错误",
+                        message=str(e)[:100],
+                        sound=False
+                    )
+                    self._set_state(AppState.IDLE)
+
+            threading.Thread(target=finalize_streaming, daemon=True).start()
+            return
+
+        # 批处理模式
         try:
             audio_data = self.recorder.stop()
         except Exception as e:
-            rumps.notification(
+            self.platform_app.show_notification(
                 title="语音输入",
                 subtitle="",
                 message=f"停止录音失败: {str(e)[:80]}",
@@ -242,7 +302,7 @@ class VoiceInputApp(rumps.App):
             return
 
         if len(audio_data) == 0:
-            rumps.notification(
+            self.platform_app.show_notification(
                 title="语音输入",
                 subtitle="",
                 message="没有录到音频",
@@ -251,17 +311,15 @@ class VoiceInputApp(rumps.App):
             self._set_state(AppState.IDLE)
             return
 
-        # 在后台线程进行识别
         threading.Thread(target=self._recognize_and_input, args=(audio_data,), daemon=True).start()
 
     def _recognize_and_input(self, audio_data):
-        """识别并输入文字（在后台线程运行）"""
+        """识别并输入文字（批处理模式，在后台线程运行）"""
         try:
-            # 转换为 base64
             audio_base64 = audio_to_base64(audio_data)
 
             if not audio_base64:
-                rumps.notification(
+                self.platform_app.show_notification(
                     title="语音输入",
                     subtitle="",
                     message="音频处理失败",
@@ -270,14 +328,25 @@ class VoiceInputApp(rumps.App):
                 self._set_state(AppState.IDLE)
                 return
 
-            # 调用 ASR 识别
             original_text = self._recognize_speech(audio_base64)
+            self._correct_and_input(original_text)
 
-            # 版本追踪变量
+        except Exception as e:
+            self.platform_app.show_notification(
+                title="语音输入",
+                subtitle="错误",
+                message=str(e)[:100],
+                sound=False
+            )
+            self._set_state(AppState.IDLE)
+
+    def _correct_and_input(self, original_text: str):
+        """纠错并输入文字（批处理和流式模式共用）"""
+        try:
             corrected_text = original_text
             status = "none"
 
-            # 1. 语音纠错（如果启用且长度>=5）
+            # 语音纠错
             if original_text and original_text.strip() and len(original_text.strip()) >= 5 and self.config.llm_correction_enabled:
                 corrected_text = self._correct_with_llm(original_text)
                 if corrected_text != original_text:
@@ -285,14 +354,14 @@ class VoiceInputApp(rumps.App):
                 else:
                     status = "unchanged"
 
-            # 2. 上下文纠错（如果启用）
+            # 上下文纠错
             if corrected_text and corrected_text.strip() and self.config.context_correction_enabled:
                 context_corrected = self._correct_with_context(corrected_text)
                 if context_corrected != corrected_text:
                     corrected_text = context_corrected
                     status = "auto"
 
-            # 3. 将结果添加到历史（带版本信息）
+            # 添加到历史
             final_text = corrected_text
             if final_text and final_text.strip():
                 history_mgr = get_history_manager()
@@ -302,14 +371,14 @@ class VoiceInputApp(rumps.App):
                     text=final_text,
                     status=status
                 )
-                # 更新统计显示
                 self._update_stats_display()
 
             if final_text:
-                # 输入识别的文字
+                from platform_support import get_text_inputter
+                input_text = get_text_inputter()
                 input_text(final_text)
             else:
-                rumps.notification(
+                self.platform_app.show_notification(
                     title="语音输入",
                     subtitle="",
                     message="未识别到文字",
@@ -317,7 +386,7 @@ class VoiceInputApp(rumps.App):
                 )
 
         except Exception as e:
-            rumps.notification(
+            self.platform_app.show_notification(
                 title="语音输入",
                 subtitle="错误",
                 message=str(e)[:100],
@@ -327,16 +396,7 @@ class VoiceInputApp(rumps.App):
             self._set_state(AppState.IDLE)
 
     def _recognize_speech(self, audio_base64: str) -> str:
-        """
-        调用 ASR 模型进行语音识别
-
-        Args:
-            audio_base64: base64 编码的音频数据
-
-        Returns:
-            识别出的文字
-        """
-        # 获取 API Key（优先使用配置文件，其次环境变量）
+        """调用 ASR 模型进行语音识别"""
         api_key = self.config.get_effective_api_key()
         if not api_key:
             raise ValueError("请在设置中配置 API Key 或设置环境变量 DASHSCOPE_API_KEY")
@@ -346,7 +406,6 @@ class VoiceInputApp(rumps.App):
             base_url=self.config.asr_base_url
         )
 
-        # 调用 ASR 模型
         completion = client.chat.completions.create(
             model=self.config.asr_model,
             messages=[{
@@ -365,66 +424,39 @@ class VoiceInputApp(rumps.App):
         return completion.choices[0].message.content
 
     def _correct_with_llm(self, text: str) -> str:
-        """
-        使用 LLM 对语音识别结果进行纠错
-
-        Args:
-            text: 语音识别的原始文本
-
-        Returns:
-            纠错后的文本
-        """
+        """使用 LLM 对语音识别结果进行纠错"""
         api_key = self.config.get_effective_llm_api_key()
         if not api_key:
-            # 没有配置 LLM API Key，返回原文
             return text
 
-        # 根据 provider 获取 base_url
         provider = self.config.llm_provider
         if provider == "deepseek":
             base_url = "https://api.deepseek.com"
         else:
-            base_url = "https://api.deepseek.com"  # 默认使用 deepseek
+            base_url = "https://api.deepseek.com"
 
         client = OpenAI(
             api_key=api_key,
             base_url=base_url
         )
 
-        # 构建纠错请求 - 使用 system 角色分离指令和内容
         prompt = self.config.llm_correction_prompt
         try:
             completion = client.chat.completions.create(
                 model=self.config.llm_model,
                 messages=[
-                    {
-                        "role": "system",
-                        "content": prompt
-                    },
-                    {
-                        "role": "user",
-                        "content": text
-                    }
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": text}
                 ],
                 stream=False
             )
             corrected_text = completion.choices[0].message.content
             return corrected_text.strip() if corrected_text else text
         except Exception:
-            # 纠错失败，返回原文
             return text
 
     def _correct_with_context(self, text: str) -> str:
-        """
-        使用上下文对语音识别结果进行纠错
-
-        Args:
-            text: 语音识别的原始文本（可能已经过语音纠错）
-
-        Returns:
-            纠错后的文本
-        """
-        # 获取上下文窗口内的历史消息（带有效期过滤）
+        """使用上下文对语音识别结果进行纠错"""
         history_mgr = get_history_manager()
         recent = history_mgr.get_recent(
             self.config.context_window_size,
@@ -432,14 +464,12 @@ class VoiceInputApp(rumps.App):
         )
         context_window = [h["text"] for h in recent]
         if not context_window:
-            # 没有历史消息，直接返回
             return text
 
         api_key = self.config.get_effective_llm_api_key()
         if not api_key:
             return text
 
-        # 根据 provider 获取 base_url
         provider = self.config.llm_provider
         if provider == "deepseek":
             base_url = "https://api.deepseek.com"
@@ -451,28 +481,19 @@ class VoiceInputApp(rumps.App):
             base_url=base_url
         )
 
-        # 构建历史消息文本
         history_text = "\n".join([f"{i+1}. {msg}" for i, msg in enumerate(context_window)])
-
-        # 获取上下文纠错提示词并填充变量
         prompt_template = self.config.context_correction_prompt
         prompt = prompt_template.format(history=history_text, current=text)
 
         try:
             completion = client.chat.completions.create(
                 model=self.config.llm_model,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
+                messages=[{"role": "user", "content": prompt}],
                 stream=False
             )
             corrected_text = completion.choices[0].message.content
             return corrected_text.strip() if corrected_text else text
         except Exception:
-            # 纠错失败，返回原文
             return text
 
     def _start_settings_server(self):
@@ -493,7 +514,7 @@ class VoiceInputApp(rumps.App):
                 try:
                     mtime = os.path.getmtime(self.config.config_file)
                     if mtime > self._config_mtime:
-                        if self._config_mtime > 0:  # 不是第一次
+                        if self._config_mtime > 0:
                             self._reload_config()
                         self._config_mtime = mtime
                 except Exception:
@@ -505,33 +526,44 @@ class VoiceInputApp(rumps.App):
 
     def _reload_config(self):
         """重新加载配置"""
-        # 重新读取配置
         self.config = get_config()
         self.config._config = self.config._load_config()
-
-        # 更新麦克风设备
         self.recorder.set_device(self.config.microphone_device_id)
+        # 更新快捷键监听
+        self.keyboard_listener.set_shortcut(self.config.shortcut_key)
 
     def _open_settings(self, _):
         """打开设置页面"""
         webbrowser.open(f"http://127.0.0.1:{SETTINGS_PORT}/settings")
 
-    def run(self, **options):
+    def run(self):
         """启动应用"""
+        # 启动设置服务
+        self._start_settings_server()
+
+        # 启动配置监控
+        self._start_config_watcher()
+
+        # 设置菜单
+        self.platform_app.setup_menu(
+            on_toggle_recording=self._toggle_recording,
+            on_open_settings=self._open_settings
+        )
+
+        # 初始化统计显示
+        self._update_stats_display()
+
         # 启动键盘监听
         self.keyboard_listener.start()
 
         try:
-            super().run(**options)
+            self.platform_app.run()
         finally:
-            # 停止运行
             self._running = False
-            # 停止键盘监听
             self.keyboard_listener.stop()
 
 
 def main():
-    # 检查 API Key
     config = get_config()
     if not config.get_effective_api_key():
         print("提示: 未配置 API Key")

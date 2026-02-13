@@ -1,0 +1,10 @@
+# 跨平台通用依赖
+pynput
+sounddevice
+scipy
+numpy
+openai
+fastapi
+uvicorn
+webrtcvad
+websockets

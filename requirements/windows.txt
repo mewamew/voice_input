@@ -1,0 +1,8 @@
+# Windows 专用依赖
+-r common.txt
+
+pystray
+Pillow
+pyperclip
+pyautogui
+plyer

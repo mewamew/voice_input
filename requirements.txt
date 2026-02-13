@@ -1,7 +1,10 @@
-rumps
+# 此文件保持向后兼容，推荐使用 install.py 进行安装
+# 或者根据平台选择：
+#   - macOS: pip install -r requirements/macos.txt
+#   - Windows: pip install -r requirements/windows.txt
+
+# 跨平台通用依赖
 pynput
-pyobjc-framework-Quartz
-pyobjc-framework-Cocoa
 sounddevice
 scipy
 numpy
@@ -9,3 +12,9 @@ openai
 fastapi
 uvicorn
 webrtcvad
+websockets
+
+# macOS 专用依赖（在 Windows 上会安装失败，请忽略）
+rumps
+pyobjc-framework-Quartz
+pyobjc-framework-Cocoa

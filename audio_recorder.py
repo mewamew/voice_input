@@ -43,6 +43,9 @@ class AudioRecorder:
         self._vad = webrtcvad.Vad(3)  # 敏感度 0-3，3 最敏感
         self._vad_buffer = np.array([], dtype=np.int16)  # 用于累积音频数据
 
+        # 音频流回调（用于流式识别）
+        self._on_audio_chunk: Optional[Callable[[bytes], None]] = None
+
         # 自动停止相关属性
         self._start_time: float = 0
         self._last_voice_time: float = 0
@@ -58,13 +61,15 @@ class AudioRecorder:
             self.device_id = device_id
 
     def start(self, max_duration: int = 60, silence_timeout: int = 3,
-               on_auto_stop: Optional[Callable[[str], None]] = None):
+               on_auto_stop: Optional[Callable[[str], None]] = None,
+               on_audio_chunk: Optional[Callable[[bytes], None]] = None):
         """开始录音
 
         Args:
             max_duration: 最长录音时长（秒）
             silence_timeout: 静音超时时间（秒）
             on_auto_stop: 自动停止时的回调函数，参数为停止原因 ('timeout' / 'silence')
+            on_audio_chunk: 音频数据回调（PCM int16 bytes），用于流式识别
         """
         with self._lock:
             if self._recording:
@@ -80,6 +85,7 @@ class AudioRecorder:
             self._max_duration = max_duration
             self._silence_timeout = silence_timeout
             self._auto_stop_callback = on_auto_stop
+            self._on_audio_chunk = on_audio_chunk
             self._auto_stop_reason = None
             self._auto_stopped = False
 
@@ -105,6 +111,7 @@ class AudioRecorder:
                 self._audio_chunks = []
                 self._vad_buffer = np.array([], dtype=np.int16)
                 self._auto_stop_callback = None
+                self._on_audio_chunk = None
                 self._auto_stop_reason = None
                 self._auto_stopped = False
                 self._start_time = 0
@@ -157,6 +164,13 @@ class AudioRecorder:
 
         # 保存音频数据
         self._audio_chunks.append(indata.copy())
+
+        # 流式回调：转发 PCM 数据
+        if self._on_audio_chunk:
+            try:
+                self._on_audio_chunk(indata.flatten().tobytes())
+            except Exception:
+                pass
 
         # 将新数据添加到 VAD 缓冲区
         chunk = indata.flatten()
