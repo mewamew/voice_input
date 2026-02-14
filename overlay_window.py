@@ -11,9 +11,24 @@ from typing import Optional
 if sys.platform == "darwin":
     from AppKit import (
         NSObject, NSWindow, NSWindowStyleMaskBorderless, NSBackingStoreBuffered,
-        NSFloatingWindowLevel, NSTextField, NSFont, NSColor,
+        NSFloatingWindowLevel, NSTextField, NSTextFieldCell, NSFont, NSColor,
         NSScreen, NSMakeRect, NSTextAlignmentCenter,
     )
+    from objc import super as objc_super
+
+    class _VerticalCenterCell(NSTextFieldCell):
+        """垂直居中的 NSTextFieldCell"""
+
+        def drawInteriorWithFrame_inView_(self, frame, view):
+            attr_str = self.attributedStringValue()
+            text_size = attr_str.size()
+            centered = NSMakeRect(
+                frame.origin.x,
+                frame.origin.y + (frame.size.height - text_size.height) / 2,
+                frame.size.width,
+                text_size.height,
+            )
+            objc_super(_VerticalCenterCell, self).drawInteriorWithFrame_inView_(centered, view)
 
     class _OverlayHelper(NSObject):
         """主线程操作代理（在模块级定义，避免重复注册 ObjC 类）"""
@@ -94,9 +109,10 @@ class OverlayWindow:
         content_view.layer().setCornerRadius_(12)
         content_view.layer().setMasksToBounds_(True)
 
-        # 创建文本标签
-        text_rect = NSMakeRect(16, 8, window_width - 32, window_height - 16)
+        # 创建文本标签（占满窗口高度，通过自定义 Cell 垂直居中）
+        text_rect = NSMakeRect(16, 0, window_width - 32, window_height)
         text_field = NSTextField.alloc().initWithFrame_(text_rect)
+        text_field.setCell_(_VerticalCenterCell.alloc().init())
         text_field.setStringValue_("")
         text_field.setFont_(NSFont.systemFontOfSize_(18))
         text_field.setTextColor_(NSColor.whiteColor())

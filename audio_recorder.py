@@ -129,21 +129,26 @@ class AudioRecorder:
             if not self._recording:
                 return np.array([], dtype=np.int16)
 
-            # 先设置标志，阻止 _audio_callback 触发自动停止
+            # 先设置标志，阻止 _audio_callback 继续写入
             self._recording = False
             self._auto_stopped = True
+            stream = self._stream
+            self._stream = None
+            self._on_audio_chunk = None
+            self._auto_stop_callback = None
 
-            if self._stream:
-                try:
-                    self._stream.stop()
-                except Exception:
-                    pass
-                try:
-                    self._stream.close()
-                except Exception:
-                    pass
-                self._stream = None
+        # 在锁外关闭音频流，避免和回调线程争锁造成阻塞
+        if stream:
+            try:
+                stream.stop()
+            except Exception:
+                pass
+            try:
+                stream.close()
+            except Exception:
+                pass
 
+        with self._lock:
             # 合并所有音频块
             if self._audio_chunks:
                 audio_data = np.concatenate(self._audio_chunks)
@@ -151,79 +156,92 @@ class AudioRecorder:
                 audio_data = np.array([], dtype=np.int16)
 
             self._audio_chunks = []
+            self._vad_buffer = np.array([], dtype=np.int16)
             return audio_data
 
     def is_recording(self) -> bool:
         """检查是否正在录音"""
-        return self._recording
+        with self._lock:
+            return self._recording
 
     def _audio_callback(self, indata, frames, time_info, status):
         """音频流回调函数"""
-        if not self._recording or self._auto_stopped:
-            return
+        on_audio_chunk = None
+        pcm_bytes = b""
+        auto_stop_reason = None
 
-        # 保存音频数据
-        self._audio_chunks.append(indata.copy())
+        with self._lock:
+            if not self._recording or self._auto_stopped:
+                return
 
-        # 流式回调：转发 PCM 数据
-        if self._on_audio_chunk:
+            chunk_copy = indata.copy()
+            self._audio_chunks.append(chunk_copy)
+            on_audio_chunk = self._on_audio_chunk
+
+            chunk = chunk_copy.flatten()
+            pcm_bytes = chunk.tobytes()
+            self._vad_buffer = np.concatenate([self._vad_buffer, chunk])
+
+            current_time = time.time()
+
+            # 按帧处理 VAD 检测
+            while len(self._vad_buffer) >= VAD_FRAME_SAMPLES:
+                frame = self._vad_buffer[:VAD_FRAME_SAMPLES]
+                self._vad_buffer = self._vad_buffer[VAD_FRAME_SAMPLES:]
+
+                # 转换为 bytes 进行 VAD 检测
+                frame_bytes = frame.tobytes()
+                try:
+                    if self._vad.is_speech(frame_bytes, self.sample_rate):
+                        self._last_voice_time = current_time
+                except Exception:
+                    # VAD 检测失败时忽略
+                    pass
+
+            # 检查是否超过最大时长
+            if current_time - self._start_time >= self._max_duration:
+                auto_stop_reason = 'timeout'
+            # 检查静音是否超时
+            elif current_time - self._last_voice_time >= self._silence_timeout:
+                auto_stop_reason = 'silence'
+
+        # 流式回调：转发 PCM 数据（锁外执行，避免阻塞录音状态更新）
+        if on_audio_chunk:
             try:
-                self._on_audio_chunk(indata.flatten().tobytes())
+                on_audio_chunk(pcm_bytes)
             except Exception:
                 pass
 
-        # 将新数据添加到 VAD 缓冲区
-        chunk = indata.flatten()
-        self._vad_buffer = np.concatenate([self._vad_buffer, chunk])
-
-        current_time = time.time()
-
-        # 按帧处理 VAD 检测
-        while len(self._vad_buffer) >= VAD_FRAME_SAMPLES:
-            frame = self._vad_buffer[:VAD_FRAME_SAMPLES]
-            self._vad_buffer = self._vad_buffer[VAD_FRAME_SAMPLES:]
-
-            # 转换为 bytes 进行 VAD 检测
-            frame_bytes = frame.tobytes()
-            try:
-                if self._vad.is_speech(frame_bytes, self.sample_rate):
-                    self._last_voice_time = current_time
-            except Exception:
-                # VAD 检测失败时忽略
-                pass
-
-        # 检查是否超过最大时长
-        if current_time - self._start_time >= self._max_duration:
-            self._trigger_auto_stop('timeout')
-            return
-
-        # 检查静音是否超时
-        if current_time - self._last_voice_time >= self._silence_timeout:
-            self._trigger_auto_stop('silence')
-            return
+        if auto_stop_reason:
+            self._trigger_auto_stop(auto_stop_reason)
 
     def _trigger_auto_stop(self, reason: str):
         """触发自动停止"""
-        # 双重检查：如果已经停止或不在录音状态，直接返回
-        if self._auto_stopped or not self._recording:
-            return
+        with self._lock:
+            # 双重检查：如果已经停止或不在录音状态，直接返回
+            if self._auto_stopped or not self._recording:
+                return
 
-        self._auto_stopped = True
-        self._auto_stop_reason = reason
+            self._auto_stopped = True
+            self._auto_stop_reason = reason
+            callback = self._auto_stop_callback
 
         # 在新线程中调用回调，避免阻塞音频回调
-        if self._auto_stop_callback:
-            threading.Thread(target=self._auto_stop_callback, args=(reason,), daemon=True).start()
+        if callback:
+            threading.Thread(target=callback, args=(reason,), daemon=True).start()
 
     def get_recording_duration(self) -> float:
         """获取当前录音时长（秒）"""
-        if not self._recording:
-            return 0
-        return time.time() - self._start_time
+        with self._lock:
+            if not self._recording:
+                return 0
+            start_time = self._start_time
+        return time.time() - start_time
 
     def get_auto_stop_reason(self) -> Optional[str]:
         """获取自动停止原因"""
-        return self._auto_stop_reason
+        with self._lock:
+            return self._auto_stop_reason
 
 
 def audio_to_base64(audio_data: np.ndarray, sample_rate: int = SAMPLE_RATE) -> str:

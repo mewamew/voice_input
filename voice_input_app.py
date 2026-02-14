@@ -49,6 +49,9 @@ class VoiceInputApp:
 
         # 流式识别相关
         self._streaming_asr = None
+        self._streaming_lock = threading.Lock()  # 保护 _streaming_asr 的并发访问
+        self._streaming_last_text = ""  # 追踪流式识别最新文字
+        self._streaming_text_lock = threading.Lock()
         self._overlay = OverlayWindow()
 
         # 键盘监听器
@@ -72,6 +75,19 @@ class VoiceInputApp:
         """退出回调"""
         self._running = False
         self.keyboard_listener.stop()
+        # 确保录音器和流式 ASR 被清理
+        try:
+            self.recorder.stop()
+        except Exception:
+            pass
+        with self._streaming_lock:
+            streaming_asr = self._streaming_asr
+            self._streaming_asr = None
+        if streaming_asr:
+            try:
+                streaming_asr.stop()
+            except Exception:
+                pass
 
     def _update_stats_display(self):
         """更新统计显示"""
@@ -166,6 +182,7 @@ class VoiceInputApp:
 
     def _start_streaming_recording(self):
         """流式模式录音（火山引擎）"""
+        asr = None
         try:
             from volcengine_asr import VolcengineStreamingASR
 
@@ -174,14 +191,21 @@ class VoiceInputApp:
                 raise ValueError("请在设置中配置火山引擎 App Key 和 Access Key")
 
             # 创建流式 ASR 客户端
-            self._streaming_asr = VolcengineStreamingASR(
+            asr = VolcengineStreamingASR(
                 app_key=keys["app_key"],
                 access_key=keys["access_key"],
                 on_partial_result=self._on_streaming_partial,
                 on_final_result=self._on_streaming_final,
                 on_error=self._on_streaming_error,
             )
-            self._streaming_asr.start()
+            asr.start()
+
+            with self._streaming_lock:
+                self._streaming_asr = asr
+
+            # 重置流式识别文字追踪
+            with self._streaming_text_lock:
+                self._streaming_last_text = ""
 
             # 显示浮动窗口
             self._overlay.show("正在聆听...")
@@ -191,10 +215,14 @@ class VoiceInputApp:
                 max_duration=self.config.recording_max_duration,
                 silence_timeout=self.config.recording_silence_timeout,
                 on_auto_stop=self._on_auto_stop,
-                on_audio_chunk=self._streaming_asr.feed_audio,
+                on_audio_chunk=asr.feed_audio,
             )
         except Exception as e:
-            self._streaming_asr = None
+            if asr:
+                # recorder.start 失败时，asr 线程可能已启动，异步收尾避免会话泄漏
+                threading.Thread(target=asr.stop, daemon=True).start()
+            with self._streaming_lock:
+                self._streaming_asr = None
             self._overlay.hide()
             self._set_state(AppState.IDLE)
             self.platform_app.show_notification(
@@ -206,16 +234,41 @@ class VoiceInputApp:
 
     def _on_streaming_partial(self, text: str):
         """流式识别中间结果回调"""
+        if text:
+            with self._streaming_text_lock:
+                self._streaming_last_text = text
         self._overlay.update_text(text if text else "正在聆听...")
 
     def _on_streaming_final(self, text: str):
         """流式识别最终结果回调"""
         if text:
+            with self._streaming_text_lock:
+                self._streaming_last_text = text
             self._overlay.update_text(text)
 
     def _on_streaming_error(self, msg: str):
         """流式识别错误回调"""
-        self._overlay.update_text("识别出错")
+        self._overlay.update_text("识别出错，正在结束...")
+
+        with self._state_lock:
+            current_state = self.state
+        with self._streaming_lock:
+            has_streaming = self._streaming_asr is not None
+
+        if current_state == AppState.RECORDING and has_streaming:
+            # 网络/服务端异常时，自动走停录流程，尽量输出已有 partial
+            threading.Thread(target=self._stop_and_recognize, daemon=True).start()
+            return
+
+        if current_state != AppState.PROCESSING:
+            self._overlay.hide()
+            self.platform_app.show_notification(
+                title="语音输入",
+                subtitle="",
+                message=f"流式识别异常: {str(msg)[:80]}",
+                sound=False
+            )
+            self._set_state(AppState.IDLE)
 
     def _on_auto_stop(self, reason: str):
         """处理自动停止事件"""
@@ -226,43 +279,57 @@ class VoiceInputApp:
         if reason == 'timeout':
             self._stop_and_recognize()
         elif reason == 'silence':
-            # 流式模式下也需要清理
-            streaming_asr = self._streaming_asr
-            self._streaming_asr = None
-            if streaming_asr:
-                try:
-                    streaming_asr.stop()
-                except Exception:
-                    pass
-            self._overlay.hide()
-            self._set_state(AppState.IDLE)
-            self.recorder.stop()
-            self.platform_app.show_notification(
-                title="语音输入",
-                subtitle="",
-                message="录音已取消（未检测到声音）",
-                sound=False
-            )
+            with self._streaming_lock:
+                is_streaming = self._streaming_asr is not None
+
+            if is_streaming:
+                # 流式模式：交给 _stop_and_recognize 处理，等待 ASR 最终结果
+                self._stop_and_recognize()
+            else:
+                # 批处理模式：直接取消录音
+                self.recorder.stop()
+                self._set_state(AppState.IDLE)
+                self.platform_app.show_notification(
+                    title="语音输入",
+                    subtitle="",
+                    message="录音已取消（未检测到声音）",
+                    sound=False
+                )
 
     def _stop_and_recognize(self):
         """停止录音并进行识别"""
         self._set_state(AppState.PROCESSING)
 
-        # 流式模式：停止 ASR 并等待最终结果
-        if self._streaming_asr:
+        # 先停录音器（立即释放麦克风）
+        try:
+            audio_data = self.recorder.stop()
+        except Exception as e:
+            self._overlay.hide()
+            self.platform_app.show_notification(
+                title="语音输入",
+                subtitle="",
+                message=f"停止录音失败: {str(e)[:80]}",
+                sound=False
+            )
+            self._set_state(AppState.IDLE)
+            return
+
+        # 取出流式 ASR（加锁防止和 auto-stop 竞态）
+        with self._streaming_lock:
             streaming_asr = self._streaming_asr
             self._streaming_asr = None
 
-            try:
-                audio_data = self.recorder.stop()
-            except Exception:
-                pass
-
+        # 流式模式：停止 ASR 并等待最终结果
+        if streaming_asr:
             self._overlay.update_text("正在处理...")
 
             def finalize_streaming():
                 try:
                     final_text = streaming_asr.stop()
+                    # 服务端未返回 final 时，回退到最近一次 partial，避免静音自动停止后丢半句
+                    if not final_text or not final_text.strip():
+                        with self._streaming_text_lock:
+                            final_text = self._streaming_last_text
                     self._overlay.hide()
 
                     if final_text and final_text.strip():
@@ -289,18 +356,6 @@ class VoiceInputApp:
             return
 
         # 批处理模式
-        try:
-            audio_data = self.recorder.stop()
-        except Exception as e:
-            self.platform_app.show_notification(
-                title="语音输入",
-                subtitle="",
-                message=f"停止录音失败: {str(e)[:80]}",
-                sound=False
-            )
-            self._set_state(AppState.IDLE)
-            return
-
         if len(audio_data) == 0:
             self.platform_app.show_notification(
                 title="语音输入",
