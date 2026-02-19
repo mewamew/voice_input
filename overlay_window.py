@@ -82,7 +82,7 @@ class OverlayWindow:
 
         # 窗口尺寸和位置（屏幕底部中央）
         window_width = 600
-        window_height = 50
+        window_height = 100  # 增加高度以容纳 3 行文本（字体 18px，行高约 26px）
         x = (screen_frame.size.width - window_width) / 2
         y = screen_frame.size.height * 0.15  # 屏幕下方 15% 位置
 
@@ -109,10 +109,9 @@ class OverlayWindow:
         content_view.layer().setCornerRadius_(12)
         content_view.layer().setMasksToBounds_(True)
 
-        # 创建文本标签（占满窗口高度，通过自定义 Cell 垂直居中）
-        text_rect = NSMakeRect(16, 0, window_width - 32, window_height)
+        # 创建文本标签（占满窗口高度，支持多行显示）
+        text_rect = NSMakeRect(16, 12, window_width - 32, window_height - 24)  # 上下各留 12px 内边距
         text_field = NSTextField.alloc().initWithFrame_(text_rect)
-        text_field.setCell_(_VerticalCenterCell.alloc().init())
         text_field.setStringValue_("")
         text_field.setFont_(NSFont.systemFontOfSize_(18))
         text_field.setTextColor_(NSColor.whiteColor())
@@ -121,7 +120,10 @@ class OverlayWindow:
         text_field.setEditable_(False)
         text_field.setSelectable_(False)
         text_field.setAlignment_(NSTextAlignmentCenter)
-        text_field.setLineBreakMode_(4)  # NSLineBreakByTruncatingTail
+        # 多行显示配置
+        text_field.setLineBreakMode_(0)  # NSLineBreakByWordWrapping - 词级换行
+        text_field.setUsesSingleLineMode_(False)  # 禁用单行模式
+        text_field.setMaximumNumberOfLines_(3)  # 最多显示 3 行
 
         content_view.addSubview_(text_field)
 
