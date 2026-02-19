@@ -248,6 +248,49 @@ class VoiceInputApp:
 
     def _on_streaming_error(self, msg: str):
         """流式识别错误回调"""
+        # 解析错误类型
+        error_type = "UNKNOWN"
+        error_message = msg
+
+        if msg.startswith("BUFFER_FULL_AUTO_STOP:"):
+            error_type = "BUFFER_FULL"
+            error_message = msg.split(":", 1)[1] if ":" in msg else msg
+        elif msg.startswith("BUFFER_WARNING:"):
+            error_type = "BUFFER_WARNING"
+            error_message = msg.split(":", 1)[1] if ":" in msg else msg
+
+        # 缓冲区预警：只通知，不停止
+        if error_type == "BUFFER_WARNING":
+            self._overlay.update_text("网络延迟较高...")
+            # 不需要额外处理，继续录音
+            return
+
+        # 缓冲区满：自动停止录音
+        if error_type == "BUFFER_FULL":
+            with self._state_lock:
+                current_state = self.state
+
+            if current_state == AppState.RECORDING:
+                # 更新浮动窗口提示
+                self._overlay.update_text("网络延迟过高，正在停止...")
+
+                # 异步触发停止流程，处理已录制内容
+                def auto_stop_on_buffer_full():
+                    # 停止录音并处理已有音频
+                    self._stop_and_recognize()
+
+                    # 显示明确的通知
+                    self.platform_app.show_notification(
+                        title="语音输入",
+                        subtitle="",
+                        message="网络延迟过高，录音已自动停止，正在处理已录制内容",
+                        sound=False
+                    )
+
+                threading.Thread(target=auto_stop_on_buffer_full, daemon=True).start()
+                return
+
+        # 其他错误：原有逻辑
         self._overlay.update_text("识别出错，正在结束...")
 
         with self._state_lock:
@@ -265,7 +308,7 @@ class VoiceInputApp:
             self.platform_app.show_notification(
                 title="语音输入",
                 subtitle="",
-                message=f"流式识别异常: {str(msg)[:80]}",
+                message=f"流式识别异常: {error_message[:80]}",
                 sound=False
             )
             self._set_state(AppState.IDLE)

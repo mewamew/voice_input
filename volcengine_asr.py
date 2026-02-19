@@ -141,8 +141,10 @@ class VolcengineStreamingASR:
     # 音频分块大小（200ms @ 16kHz 16bit mono = 6400 bytes）
     CHUNK_DURATION_MS = 200
     CHUNK_SIZE = int(16000 * 2 * CHUNK_DURATION_MS / 1000)  # 6400 bytes
-    # 最多缓存 12 秒音频，防止网络异常导致内存持续增长
-    MAX_BUFFER_SIZE = CHUNK_SIZE * 60
+    # 最多缓存 60 秒音频，防止网络异常导致内存持续增长
+    MAX_BUFFER_SIZE = CHUNK_SIZE * 300  # 300 chunks = 60 秒 = 1,920,000 bytes
+    # 缓冲区预警阈值（80%）
+    BUFFER_WARNING_THRESHOLD = int(MAX_BUFFER_SIZE * 0.8)
     # stop() 等待服务端最终结果的时限
     STOP_WAIT_TIMEOUT_SECONDS = 12
     # 超时后主动关闭 WebSocket 的补充等待时长
@@ -175,6 +177,9 @@ class VolcengineStreamingASR:
         self._seq = 1  # 协议序号
         self._overflow_notified = False
         self._stop_lock = threading.Lock()
+        # 缓冲区健康监控状态
+        self._buffer_warning_sent = False  # 是否已发送 80% 预警
+        self._buffer_full_triggered = False  # 是否已触发缓冲区满停止
 
     def start(self):
         """启动 WebSocket 连接（在独立线程中运行 asyncio 事件循环）"""
@@ -184,8 +189,11 @@ class VolcengineStreamingASR:
         self._seq = 1
         self._request_id = str(uuid.uuid4())
         self._overflow_notified = False
+        # 重置缓冲区监控状态
         with self._buffer_lock:
             self._audio_buffer.clear()
+            self._buffer_warning_sent = False
+            self._buffer_full_triggered = False
         self._thread = threading.Thread(target=self._run_loop, daemon=True)
         self._thread.start()
 
@@ -375,18 +383,32 @@ class VolcengineStreamingASR:
         """喂入 PCM 音频数据（线程安全）"""
         if self._stopped or not pcm_bytes:
             return
-        overflow_happened = False
+
+        buffer_warning = False
+        buffer_full = False
+
         with self._buffer_lock:
             self._audio_buffer.extend(pcm_bytes)
-            if len(self._audio_buffer) > self.MAX_BUFFER_SIZE:
-                overflow = len(self._audio_buffer) - self.MAX_BUFFER_SIZE
-                del self._audio_buffer[:overflow]
-                if not self._overflow_notified:
-                    self._overflow_notified = True
-                    overflow_happened = True
+            current_size = len(self._audio_buffer)
 
-        if overflow_happened:
-            print("Warning: ASR audio buffer overflow, dropped old audio chunks.")
+            # 检查缓冲区满（100%）
+            if current_size > self.MAX_BUFFER_SIZE:
+                if not self._buffer_full_triggered:
+                    self._buffer_full_triggered = True
+                    buffer_full = True
+            # 检查缓冲区预警（80%）
+            elif current_size > self.BUFFER_WARNING_THRESHOLD:
+                if not self._buffer_warning_sent:
+                    self._buffer_warning_sent = True
+                    buffer_warning = True
+
+        # 在锁外触发回调，避免死锁
+        if buffer_full:
+            # 缓冲区满：触发错误回调，让主程序停止录音
+            self._emit_error("BUFFER_FULL_AUTO_STOP:网络延迟过高，缓冲区已满")
+        elif buffer_warning:
+            # 缓冲区预警：通知但不停止
+            self._emit_error("BUFFER_WARNING:网络延迟较高，缓冲区已达 80%")
 
     def stop(self) -> str:
         """停止流式识别，等待最终结果
